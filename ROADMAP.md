@@ -11,14 +11,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 14    |
+| ✅ Done       | 19    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 19    |
+| ⏳ Pending    | 14    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** ≈46h (~5.75d) — of which ≈13h is labeled stretch
-**Elapsed time:** ≈1h
-**Remaining estimate:** ≈45h (~5.625d)
+**Elapsed time:** ≈2h30m
+**Remaining estimate:** ≈39h15m (~4.9d)
 
 ---
 
@@ -74,18 +74,18 @@
 | 5 | Feedback store for corrected drafts (flywheel source) | ✅ Done | 1h | 2026-07-24 19:23 | 2026-07-24 19:24 | **stretch**; built |
 | 6 | Final review + 2 fix waves (atomic state+audit commit, tail-truncation detect, CLI error handling) | ✅ Done | 45m | 2026-07-24 19:25 | 2026-07-24 19:35 | core; 71/71 tests green |
 
-### Phase 3 — ExperimentWatcher Agent  ⏳
+### Phase 3 — ExperimentWatcher Agent  ✅
 
-**Goal:** Given completed results, produce a plain-English customer-update draft (PendingReview) + structured anomaly report; numbers substituted from data via typed placeholders.
-**Phase estimate:** ~7h
+**Goal:** Given completed results, produce a plain-English customer-update draft (PendingReview) + structured anomaly report; numbers substituted from data via typed placeholders. (Plan: `docs/superpowers/plans/2026-07-24-phase3-experimentwatcher.md`)
+**Phase estimate:** ~7h45m
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Define versioned anomaly policy (thresholds, control identity, units, missing-data semantics) | ⏳ Pending | 1h | — | — | core; policy is an input, not hardcoded |
-| 2 | Deterministic AnomalyDetector + tests | ⏳ Pending | 2h | — | — | core |
-| 3 | Add anomalous affinity fixtures (all-failed, control-out-of-policy) | ⏳ Pending | 45m | — | — | core |
-| 4 | EmailDrafter (Claude; typed placeholder → validated numeric substitution) | ⏳ Pending | 2h | — | — | core; model IDs via claude-api skill |
-| 5 | Watcher orchestration with durable idempotency key (experiment_id, result_id, version) | ⏳ Pending | 1h30m | — | — | core |
+| 1 | Define versioned anomaly policy (thresholds, control identity, units, missing-data semantics) | ✅ Done | 1h | 2026-07-24 23:16 | 2026-07-24 23:18 | core; policy is an input, not hardcoded |
+| 2 | Deterministic AnomalyDetector + tests | ✅ Done | 2h | 2026-07-24 23:20 | 2026-07-24 23:24 | core; vacuous-truth guard verified |
+| 3 | Add anomalous affinity fixtures (all-failed, control-out-of-policy) | ✅ Done | 45m | 2026-07-24 23:26 | 2026-07-24 23:30 | core; full-suite regression-checked |
+| 4 | EmailDrafter (Claude; typed placeholder → validated numeric substitution) | ✅ Done | 2h | 2026-07-24 23:32 | 2026-07-24 23:45 | core; claude-opus-4-8 via claude-api skill |
+| 5 | Watcher orchestration with durable idempotency key (experiment_id, result_id, version) + final review & fix wave | ✅ Done | 1h45m | 2026-07-24 23:47 | 2026-07-25 09:15 | core; 99/99 tests green |
 
 ### Phase 4 — MCP Server (via subprocess bridge)  ⏳
 

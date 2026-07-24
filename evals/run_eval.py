@@ -12,6 +12,7 @@ from adaptyv.governance.audit import AuditLog
 from adaptyv.governance.db import connect
 from adaptyv.governance.models import Actor
 from evals.fake_llm import DeterministicFakeClient
+from evals.flywheel import load_promoted_cases
 from evals.golden_set import GOLDEN_SET, GoldenCase
 from evals.guards import (guard_all_numbers_grounded, guard_critical_anomalies_match,
                           guard_critical_draft_blocks_approval, guard_expected_facts_present,
@@ -52,7 +53,7 @@ def run_case(case: GoldenCase) -> EvalCaseResult:
 
 
 def main() -> int:
-    results = [run_case(case) for case in GOLDEN_SET]
+    results = [run_case(case) for case in GOLDEN_SET + load_promoted_cases()]
     total_violations = 0
     for r in results:
         status = "PASS" if not r.violations else "FAIL"

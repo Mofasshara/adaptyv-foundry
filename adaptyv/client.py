@@ -22,6 +22,12 @@ class AdaptyvClient:
                                             api_key=api_key or os.environ.get("ADAPTYV_API_KEY"))
         from adaptyv.resources.experiments import ExperimentsResource
         self.experiments = ExperimentsResource(self)
+        from adaptyv.resources.sequences import SequencesResource
+        from adaptyv.resources.targets import TargetsResource
+        from adaptyv.resources.results import ResultsResource
+        self.sequences = SequencesResource(self)
+        self.targets = TargetsResource(self)
+        self.results = ResultsResource(self)
 
     def _request(self, method: str, path: str, *, params=None, json=None) -> Any:
         return self._transport.request(method, path, params=params, json=json)

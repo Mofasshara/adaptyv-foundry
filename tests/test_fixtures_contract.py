@@ -41,6 +41,7 @@ def _validator(component: str) -> Draft202012Validator:
     ("results_list.json", None, True),
     ("targets_list.json", None, True),
     ("sequences_list.json", None, True),
+    ("sequence_detail.json", "SequenceInfo", False),
 ])
 def test_fixture_validates(fixture, component, is_list):
     data = json.loads((FIX / fixture).read_text())

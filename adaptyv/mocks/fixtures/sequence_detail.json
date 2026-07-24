@@ -1,0 +1,5 @@
+{"id": "33333333-0000-0000-0000-000000000001", "length": 120, "is_control": false,
+ "created_at": "2026-07-01T10:00:00Z",
+ "experiment": {"experiment_id": "11111111-1111-1111-1111-111111111111",
+                "experiment_code": "EXP-1001", "experiment_status": "done"},
+ "aa_string": "MKAAVSTQKKSKLASVELGYVEDLQAQIDGLKELEQEV", "name": "binder-1", "metadata": {}}

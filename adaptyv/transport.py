@@ -24,6 +24,7 @@ class MockTransport:
         self._results = load_fixture("results_list.json")["items"]
         self._targets = load_fixture("targets_list.json")["items"]
         self._sequences = load_fixture("sequences_list.json")["items"]
+        self._sequence_detail = load_fixture("sequence_detail.json")
 
     def request(self, method: str, path: str, *, params=None, json=None) -> Any:
         if method == "GET" and path == "/api/v1/experiments":
@@ -42,8 +43,11 @@ class MockTransport:
         if method == "GET" and m:
             self._detail(self._experiments, m.group(1), kind="experiment")  # 404 if unknown
             return _page([r for r in self._results if r["experiment_id"] == m.group(1)])
-        for coll, kind in ((self._targets, "target"), (self._results, "result"),
-                           (self._sequences, "sequence")):
+        m = re.fullmatch(r"/api/v1/sequences/([^/]+)", path)
+        if method == "GET" and m:
+            return self._detail(self._sequences, m.group(1),
+                                 full=self._sequence_detail, kind="sequence")
+        for coll, kind in ((self._targets, "target"), (self._results, "result")):
             m = re.fullmatch(rf"/api/v1/{kind}s/([^/]+)", path)
             if method == "GET" and m:
                 return self._detail(coll, m.group(1), kind=kind)

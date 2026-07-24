@@ -11,14 +11,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 19    |
+| ✅ Done       | 23    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 14    |
+| ⏳ Pending    | 10    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** ≈46h (~5.75d) — of which ≈13h is labeled stretch
 **Elapsed time:** ≈2h30m
-**Remaining estimate:** ≈39h15m (~4.9d)
+**Remaining estimate:** ≈32h15m (~4d)
 
 ---
 
@@ -87,17 +87,17 @@
 | 4 | EmailDrafter (Claude; typed placeholder → validated numeric substitution) | ✅ Done | 2h | 2026-07-24 23:32 | 2026-07-24 23:45 | core; claude-opus-4-8 via claude-api skill |
 | 5 | Watcher orchestration with durable idempotency key (experiment_id, result_id, version) + final review & fix wave | ✅ Done | 1h45m | 2026-07-24 23:47 | 2026-07-25 09:15 | core; 99/99 tests green |
 
-### Phase 4 — MCP Server (via subprocess bridge)  ⏳
+### Phase 4 — MCP Server (via subprocess bridge)  ✅
 
 **Goal:** One-command MCP server in Claude Desktop driving the lab via ~8 curated task-shaped tools, delegating to the Python SDK through a subprocess JSON bridge.
 **Phase estimate:** ~7h
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | `python -m adaptyv --json <op>` bridge command (stdin/stdout JSON, typed errors) | ⏳ Pending | 1h30m | — | — | core; replaces FastAPI sidecar |
-| 2 | Scaffold TS MCP server + bridge client (spawn per call) | ⏳ Pending | 1h30m | — | — | core |
-| 3 | ~8 task-shaped tools with Zod descriptions | ⏳ Pending | 3h | — | — | core; not 1:1 CRUD |
-| 4 | MCP tool tests against a stubbed bridge | ⏳ Pending | 1h | — | — | core |
+| 1 | `python -m adaptyv --json <op>` bridge command (stdin/stdout JSON, typed errors) | ✅ Done | 1h30m | 2026-07-25 00:30 | 2026-07-25 00:36 | core; replaces FastAPI sidecar |
+| 2 | Scaffold TS MCP server + bridge client (spawn per call) | ✅ Done | 1h30m | 2026-07-25 00:36 | 2026-07-25 00:42 | core |
+| 3 | ~8 task-shaped tools with Zod descriptions | ✅ Done | 3h | 2026-07-25 00:42 | 2026-07-25 00:50 | core; not 1:1 CRUD |
+| 4 | MCP tool tests against a stubbed bridge + composition root (`index.ts`) wiring all 8 tools into a runnable server | ✅ Done | 1h | 2026-07-25 00:52 | 2026-07-25 00:59 | core; also fixed a real bug: relative `pythonPath` is unsafe when an MCP client spawns the server from an arbitrary cwd — `index.ts` now resolves an absolute path via `import.meta.url`, reproduced and verified fixed with a live cross-cwd bridge call |
 
 ### Phase 5 — Evals + Loops  ⏳
 

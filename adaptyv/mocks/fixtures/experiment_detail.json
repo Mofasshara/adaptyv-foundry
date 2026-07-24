@@ -1,0 +1,5 @@
+{"id": "11111111-1111-1111-1111-111111111111", "code": "EXP-1001", "status": "done",
+ "results_status": "all", "created_at": "2026-07-01T10:00:00Z",
+ "experiment_url": "https://devs.adaptyvbio.com/e/EXP-1001", "name": "Anti-IL6 binder panel",
+ "experiment_spec": {"experiment_type": "affinity",
+   "target": {"name": "IL-6", "target_catalog_id": "IL6-001"}}}

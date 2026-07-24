@@ -1,0 +1,24 @@
+from __future__ import annotations
+
+
+class AdaptyvError(Exception):
+    def __init__(self, message: str, *, status_code: int | None = None,
+                 request_id: str | None = None):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+        self.request_id = request_id
+
+
+class AuthError(AdaptyvError): ...
+class NotFoundError(AdaptyvError): ...
+class RateLimitError(AdaptyvError): ...
+class ValidationError(AdaptyvError): ...
+class TransportError(AdaptyvError): ...
+
+
+def error_for_status(status_code: int, message: str, request_id: str | None = None) -> AdaptyvError:
+    m = {401: AuthError, 403: AuthError, 404: NotFoundError, 429: RateLimitError,
+         400: ValidationError, 422: ValidationError}
+    cls = m.get(status_code, TransportError if status_code >= 500 else AdaptyvError)
+    return cls(message, status_code=status_code, request_id=request_id)

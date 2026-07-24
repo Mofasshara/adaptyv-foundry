@@ -1,0 +1,10 @@
+{"items": [
+  {"id": "11111111-1111-1111-1111-111111111111", "code": "EXP-1001", "status": "done",
+   "results_status": "all", "created_at": "2026-07-01T10:00:00Z",
+   "experiment_url": "https://devs.adaptyvbio.com/e/EXP-1001", "experiment_type": "affinity",
+   "name": "Anti-IL6 binder panel"},
+  {"id": "22222222-2222-2222-2222-222222222222", "code": "EXP-1002", "status": "in_production",
+   "results_status": "none", "created_at": "2026-07-15T09:00:00Z",
+   "experiment_url": "https://devs.adaptyvbio.com/e/EXP-1002", "experiment_type": "affinity",
+   "name": "PD-L1 affinity screen"}
+], "total": 2, "count": 2, "offset": 0}

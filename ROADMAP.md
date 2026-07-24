@@ -66,10 +66,12 @@
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Append-only SQLite audit log + query | ⏳ Pending | 1h30m | — | — | core |
-| 2 | Draft approval state machine (Draft→PendingReview→Approved/Rejected); agent cannot self-approve | ⏳ Pending | 1h30m | — | — | core |
+| 0 | Governance domain models + errors + sqlite helper | ⏳ Pending | 45m | — | — | core |
+| 1 | Append-only, **hash-chained** SQLite audit log + `verify()` | ⏳ Pending | 1h30m | — | — | core (chain moved from #4) |
+| 2 | Draft approval state machine (PendingReview→Approved/Rejected/Sent); agent cannot self-approve | ⏳ Pending | 1h30m | — | — | core |
 | 3 | Critical-anomaly hard-block + human acknowledgement | ⏳ Pending | 1h | — | — | core |
-| 4 | Hash-chain the audit log + `verify`; separate feedback store for corrected drafts | ⏳ Pending | 2h | — | — | **stretch** |
+| 4 | `adaptyv review` + `adaptyv audit` CLI over the governance store | ⏳ Pending | 1h | — | — | core |
+| 5 | Feedback store for corrected drafts (flywheel source) | ⏳ Pending | 1h | — | — | **stretch** |
 
 ### Phase 3 — ExperimentWatcher Agent  ⏳
 
@@ -134,3 +136,4 @@
 | 2026-07-24 15:30 | Corrected the entire SDK data model against the raw OpenAPI spec | A Codex pre-implementation review + raw-JSON verification proved the v1 models/fixtures were built on a hallucinated WebFetch schema summary (wrong enums, missing pagination envelope, flattened result union) | Rewrote Phase 1 plan (models, transport, fixtures, contract test); added tests/data pinned spec + jsonschema contract test | v1 models with invented `ExperimentStatus` values, bare-array list responses, flat `ResultSummary` |
 | 2026-07-24 15:32 | MCP→SDK mechanism changed from auto-spawned FastAPI sidecar to a subprocess JSON bridge (`python -m adaptyv --json`) | Codex flagged (and user agreed) that stdio-MCP auto-spawning a web server hides port/readiness/cleanup/version-skew complexity not worth it for a take-home | Phase 4 tasks re-specified around a per-call subprocess bridge; removed FastAPI from core stack | Phase 4 built a FastAPI sidecar auto-spawned by the MCP |
 | 2026-07-24 15:34 | Re-sequenced to core-first; tagged hash-chain audit, 3 loops, live LLM-judge, TestPyPI as stretch; added SDK write methods to Phase 1 | Codex flagged ~41h scope risked leaving hard requirements shallow, and that Phase 1 lacked the write methods Phase 4's MCP needs | Phase 1 grew (+write tasks); Phases 2/5/6 items tagged core/stretch; total ≈46h with ~13h stretch | All 30 tasks equal priority; Phase 1 read-only |
+| 2026-07-24 13:00 | Phase 2 audit **hash-chain + `verify()` moved from stretch into the core audit task**; only the feedback store stays stretch. Split Phase 2 into 6 finer plan tasks (models, audit, approval, anomaly-gate, CLI, feedback) | The chain is a few lines and an unverifiable chain has no demo/governance value; keeping them together avoids a schema migration | Phase 2 core now delivers a tamper-evident, verifiable log; feedback store remains the only Phase 2 stretch item | Hash-chain + verify were Phase 2 task #4 (stretch) |

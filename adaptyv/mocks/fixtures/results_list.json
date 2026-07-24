@@ -1,0 +1,16 @@
+{"items": [
+  {"id": "aaaaaaaa-0000-0000-0000-000000000001", "title": "Affinity results — Anti-IL6 binder panel",
+   "experiment_id": "11111111-1111-1111-1111-111111111111", "result_type": "affinity",
+   "created_at": "2026-07-20T10:00:00Z", "metadata": {},
+   "data_package_url": "https://devs.adaptyvbio.com/data/EXP-1001.zip",
+   "summary": [
+     {"result_type": "affinity", "sequence": {"aa_string": "MKAA", "name": "binder-1"},
+      "kd_units": "M", "binding_strength": "strong", "positive_control": false,
+      "performance": {"verdict": "pass"}, "kd_mean": 1.2e-9,
+      "replicates": [{"replicate": 1, "kd": 1.1e-9, "expression": "high"},
+                     {"replicate": 2, "kd": 1.3e-9, "expression": "high"}]},
+     {"result_type": "affinity", "sequence": {"aa_string": "CTRLP", "name": "pos-control"},
+      "kd_units": "M", "binding_strength": "strong", "positive_control": true,
+      "performance": {"verdict": "pass"}, "kd_mean": 2.0e-9, "replicates": [{"replicate": 1, "kd": 2.0e-9}]}
+   ]}
+], "total": 1, "count": 1, "offset": 0}

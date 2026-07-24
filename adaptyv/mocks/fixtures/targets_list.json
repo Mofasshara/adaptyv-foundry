@@ -1,0 +1,6 @@
+{"items": [
+  {"id": "44444444-0000-0000-0000-000000000001", "name": "IL-6", "vendor_name": "Acme Bio",
+   "catalog_number": "IL6-001", "url": "https://devs.adaptyvbio.com/t/IL6-001", "uniprot_id": "P05231"},
+  {"id": "44444444-0000-0000-0000-000000000002", "name": "PD-L1", "vendor_name": "Acme Bio",
+   "catalog_number": "PDL1-002", "url": "https://devs.adaptyvbio.com/t/PDL1-002", "uniprot_id": "Q9NZQ7"}
+], "total": 2, "count": 2, "offset": 0}

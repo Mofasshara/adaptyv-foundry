@@ -11,14 +11,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 0     |
+| ✅ Done       | 8     |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 33    |
+| ⏳ Pending    | 25    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** ≈46h (~5.75d) — of which ≈13h is labeled stretch
-**Elapsed time:** —
-**Remaining estimate:** ≈46h (~5.75d)
+**Elapsed time:** ≈1h
+**Remaining estimate:** ≈45h (~5.625d)
 
 ---
 
@@ -43,21 +43,21 @@
 
 ## Phases
 
-### Phase 1 — SDK Core  ⏳
+### Phase 1 — SDK Core  ✅
 
 **Goal:** Typed, sync Python SDK faithful to the real API, with mock mode and read+write coverage — `AdaptyvClient(mock=True)` returns typed lab data with no key; mock/live shapes identical. (Plan: `docs/superpowers/plans/2026-07-24-phase1-sdk-core.md`, v2 schema-corrected)
 **Phase estimate:** ~11h
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Scaffold package (venv, pyproject) + vendor pinned OpenAPI spec | ⏳ Pending | 45m | — | — | core |
-| 2 | Schema-faithful pydantic models (enums, discriminated results, pagination, list-vs-detail) | ⏳ Pending | 2h | — | — | core; derived from raw spec |
-| 3 | Transport, errors, pagination-aware MockTransport + fixtures + OpenAPI contract test | ⏳ Pending | 2h30m | — | — | core |
-| 4 | AdaptyvClient + paginated experiments resource | ⏳ Pending | 1h | — | — | core |
-| 5 | Experiment write methods (create/submit/cost_estimate) | ⏳ Pending | 1h30m | — | — | core; needed by MCP |
-| 6 | sequences, targets, results resources (incl. sequences.add) | ⏳ Pending | 1h30m | — | — | core |
-| 7 | LiveTransport (idempotent-only retry, Retry-After, real error body) | ⏳ Pending | 1h30m | — | — | core |
-| 8 | Minimal Typer CLI | ⏳ Pending | 45m | — | — | core |
+| 1 | Scaffold package (venv, pyproject) + vendor pinned OpenAPI spec | ✅ Done | 45m | 2026-07-24 10:40 | 2026-07-24 10:50 | core |
+| 2 | Schema-faithful pydantic models (enums, discriminated results, pagination, list-vs-detail) | ✅ Done | 2h | 2026-07-24 10:55 | 2026-07-24 11:05 | core; derived from raw spec |
+| 3 | Transport, errors, pagination-aware MockTransport + fixtures + OpenAPI contract test | ✅ Done | 2h30m | 2026-07-24 11:08 | 2026-07-24 11:18 | core |
+| 4 | AdaptyvClient + paginated experiments resource | ✅ Done | 1h | 2026-07-24 11:20 | 2026-07-24 11:25 | core |
+| 5 | Experiment write methods (create/submit/cost_estimate) | ✅ Done | 1h30m | 2026-07-24 11:28 | 2026-07-24 11:35 | core; needed by MCP |
+| 6 | sequences, targets, results resources (incl. sequences.add) | ✅ Done | 1h30m | 2026-07-24 11:38 | 2026-07-24 11:50 | core |
+| 7 | LiveTransport (idempotent-only retry, Retry-After, real error body) | ✅ Done | 1h30m | 2026-07-24 11:52 | 2026-07-24 12:02 | core |
+| 8 | Minimal Typer CLI + final review & fix wave | ✅ Done | 45m | 2026-07-24 12:04 | 2026-07-24 12:30 | core; 44/44 tests green |
 
 ### Phase 2 — Governance Layer  ⏳
 

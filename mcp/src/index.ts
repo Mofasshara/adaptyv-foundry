@@ -14,19 +14,29 @@ import { createEstimateCostTool, createGetResultsTool } from "./tools/results.js
 import { createDraftCustomerUpdateTool } from "./tools/watcher.js";
 
 // This file lives at <repo-root>/mcp/src/index.ts, so the repo root is two
-// directories up from here. We must resolve the venv's python3 to an ABSOLUTE
-// path computed from this file's own location (not process.cwd()) because an
-// MCP client (e.g. Claude Desktop) spawns this server from an arbitrary working
-// directory it controls. node:child_process.spawn() resolves a relative command
-// string against the CHILD's cwd (POSIX exec semantics), so a bare relative
-// string like "../.venv/bin/python3" would break as soon as this process isn't
-// launched with cwd === mcp/.
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_PYTHON_PATH = path.resolve(__dirname, "../../.venv/bin/python3");
+// directories up from here. We must resolve the venv's python3 (and the cwd
+// the python child process runs with) to an ABSOLUTE path computed from this
+// file's own location (not process.cwd()) because an MCP client (e.g. Claude
+// Desktop) spawns this server from an arbitrary working directory it
+// controls. node:child_process.spawn() resolves a relative command string
+// against the CHILD's cwd (POSIX exec semantics), so a bare relative string
+// like "../.venv/bin/python3" would break as soon as this process isn't
+// launched with cwd === mcp/. Likewise, several bridge ops (e.g.
+// draft_customer_update's default `db="adaptyv_governance.db"`) resolve
+// relative paths against the PYTHON PROCESS's cwd, so BridgeClient must be
+// given an explicit cwd too — otherwise it inherits whatever arbitrary cwd
+// the MCP client launched node from.
+export function resolveRepoRoot(): string {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(__dirname, "../..");
+}
+
+const REPO_ROOT = resolveRepoRoot();
+const DEFAULT_PYTHON_PATH = path.resolve(REPO_ROOT, ".venv/bin/python3");
 
 async function main(): Promise<void> {
   const pythonPath = process.env.ADAPTYV_PYTHON_PATH ?? DEFAULT_PYTHON_PATH;
-  const bridge = new BridgeClient({ pythonPath });
+  const bridge = new BridgeClient({ pythonPath, cwd: REPO_ROOT });
   const server = new McpServer({ name: "adaptyv-foundry", version: "0.1.0" });
 
   // Every tool factory returns a handler typed as
@@ -82,7 +92,11 @@ async function main(): Promise<void> {
   await server.connect(transport);
 }
 
-main().catch((error) => {
-  console.error("adaptyv-foundry MCP server error:", error);
-  process.exit(1);
-});
+// Guard direct execution so this module can be imported (e.g. from tests, to
+// exercise resolveRepoRoot()) without spawning the real server.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error("adaptyv-foundry MCP server error:", error);
+    process.exit(1);
+  });
+}

@@ -43,9 +43,11 @@ def results_get(result_id: str, mock: bool = typer.Option(True)):
 
 @review.command("list")
 def review_list(db: str = typer.Option("adaptyv_governance.db")):
-    for d in _store(db).list():
-        flag = "  ⚠CRITICAL" if has_unacknowledged_critical(d) else ""
-        typer.echo(f"{d.draft_id[:8]}  {d.status.value:14} {d.experiment_id}{flag}")
+    def _list():
+        for d in _store(db).list():
+            flag = "  ⚠CRITICAL" if has_unacknowledged_critical(d) else ""
+            typer.echo(f"{d.draft_id[:8]}  {d.status.value:14} {d.experiment_id}{flag}")
+    _run(_list)
 
 @review.command("show")
 def review_show(draft_id: str, db: str = typer.Option("adaptyv_governance.db")):
@@ -72,9 +74,11 @@ def review_ack(draft_id: str, by: str = typer.Option(...), db: str = typer.Optio
 
 @audit.command("list")
 def audit_list(db: str = typer.Option("adaptyv_governance.db")):
-    conn = connect(db)
-    for e in AuditLog(conn).entries():
-        typer.echo(f"{e.id:3}  {e.ts}  {e.actor.kind.value}:{e.actor.id}  {e.action}  {e.target_id}")
+    def _list():
+        conn = connect(db)
+        for e in AuditLog(conn).entries():
+            typer.echo(f"{e.id:3}  {e.ts}  {e.actor.kind.value}:{e.actor.id}  {e.action}  {e.target_id}")
+    _run(_list)
 
 @audit.command("verify")
 def audit_verify(db: str = typer.Option("adaptyv_governance.db")):

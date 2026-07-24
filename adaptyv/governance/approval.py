@@ -37,7 +37,6 @@ class ApprovalStore:
              json.dumps([a.model_dump(mode="json") for a in anomalies]),
              json.dumps(created_by.model_dump(mode="json")), created_at),
         )
-        self._conn.commit()
         self._audit.record(created_by, "draft.create", "draft", draft_id, "pending_review",
                            {"experiment_id": experiment_id, "result_id": result_id,
                             "anomaly_count": len(anomalies)})
@@ -81,7 +80,6 @@ class ApprovalStore:
         self._require_status(draft, DraftStatus.APPROVED)
         self._conn.execute("UPDATE drafts SET status=? WHERE draft_id=?",
                            (DraftStatus.SENT.value, draft_id))
-        self._conn.commit()
         self._audit.record(actor, "draft.send", "draft", draft_id, "sent")
         return self.get(draft_id)
 
@@ -91,7 +89,6 @@ class ApprovalStore:
         self._conn.execute(
             "UPDATE drafts SET anomalies_acknowledged=1, acknowledged_by=? WHERE draft_id=?",
             (json.dumps(reviewer.model_dump(mode="json")), draft_id))
-        self._conn.commit()
         self._audit.record(reviewer, "anomaly.acknowledge", "draft", draft_id, "acknowledged")
         return self.get(draft_id)
 
@@ -105,10 +102,13 @@ class ApprovalStore:
             raise InvalidTransitionError(f"draft {draft.draft_id} is {draft.status.value}, expected {expected.value}")
 
     def _set_review(self, draft_id: str, status: DraftStatus, reviewer: Actor, note: str | None) -> None:
+        # No commit() here: this write and its paired self._audit.record()
+        # call (invoked immediately by the caller) must land in the same
+        # sqlite transaction so they commit atomically — see
+        # tests/test_governance_integrity.py.
         self._conn.execute(
             "UPDATE drafts SET status=?, reviewed_by=?, review_note=? WHERE draft_id=?",
             (status.value, json.dumps(reviewer.model_dump(mode="json")), note, draft_id))
-        self._conn.commit()
 
     def _row_to_draft(self, r: sqlite3.Row) -> Draft:
         return Draft(

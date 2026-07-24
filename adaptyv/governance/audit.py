@@ -1,3 +1,39 @@
+"""Tamper-evident (not tamper-proof) hash-chained audit log.
+
+Trust model — read this before relying on `verify()` for anything:
+
+`AuditLog` chains each entry to its predecessor with a SHA-256 hash over a
+canonical JSON encoding of the entry plus the previous entry's hash
+(`prev_hash`). `verify()` walks the chain from GENESIS forward and confirms
+every link and every entry's recomputed hash still match what's stored.
+
+What this DOES catch:
+  - Editing the content of an existing row (its stored `entry_hash` no
+    longer matches the recomputed hash).
+  - Deleting or reordering a row in the MIDDLE of the chain (the following
+    row's `prev_hash` no longer matches, breaking the walk).
+
+What this does NOT catch on its own:
+  - Tail truncation. Deleting the most recent N rows leaves a shorter but
+    internally-consistent prefix, so a bare `verify()` still returns True
+    even though history was erased. The only way to detect this is to have
+    pinned the chain's tail *before* the deletion: call `head()` to get
+    `(count, last_entry_hash)` at a known-good point, keep that value
+    somewhere the writer doesn't control (a separate system, a signed
+    channel, a human-witnessed note), and later call
+    `verify(expected_head=that_value)` — it fails if the tail has moved
+    backward or the count has shrunk.
+  - A determined actor with direct database access *and* knowledge of this
+    scheme: since there is no secret key or signature involved (this is a
+    plain SHA-256 content chain, not an HMAC or a signed log), such an
+    actor could delete rows and recompute a new, internally self-consistent
+    chain from that point forward. This module gives tamper-EVIDENCE against
+    accidental or unsophisticated tampering, not a cryptographic guarantee
+    against a motivated insider with DB access. A signed/HMAC'd head
+    checkpoint (published or witnessed outside the writer's control) is the
+    natural next step if that threat model matters.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -61,8 +97,9 @@ class AuditLog:
         rows = self._conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall()
         return [self._row_to_entry(r) for r in rows]
 
-    def verify(self) -> bool:
+    def verify(self, expected_head: tuple[int, str] | None = None) -> bool:
         prev = GENESIS
+        count = 0
         for r in self._conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall():
             if r["prev_hash"] != prev:
                 return False
@@ -73,7 +110,25 @@ class AuditLog:
             if recomputed != r["entry_hash"]:
                 return False
             prev = r["entry_hash"]
+            count += 1
+        # A chain-walk alone can't see a truncated tail (the surviving
+        # prefix is still internally consistent) — see module docstring.
+        # A caller that pinned `head()` beforehand can pass it here to
+        # additionally catch the tail having moved backward.
+        if expected_head is not None and (count, prev) != expected_head:
+            return False
         return True
+
+    def head(self) -> tuple[int, str]:
+        """Return (row_count, last_entry_hash), or (0, GENESIS) when empty.
+
+        Callers wanting to detect tail-truncation should persist this
+        value somewhere outside the writer's control and later pass it as
+        `verify(expected_head=...)`.
+        """
+        row = self._conn.execute("SELECT COUNT(*) AS c FROM audit_log").fetchone()
+        count = row["c"] if row else 0
+        return (count, self._last_hash())
 
     def _last_hash(self) -> str:
         row = self._conn.execute("SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()

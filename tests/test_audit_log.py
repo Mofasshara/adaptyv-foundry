@@ -41,3 +41,30 @@ def test_verify_false_after_tamper():
     conn.execute("UPDATE audit_log SET outcome='TAMPERED' WHERE id=1")
     conn.commit()
     assert log.verify() is False
+
+
+def test_head_empty_and_intact():
+    log = _log()
+    assert log.head() == (0, GENESIS)
+    log.record(Actor(kind="agent", id="w"), "a0", "draft", "d1", "ok")
+    log.record(Actor(kind="agent", id="w"), "a1", "draft", "d1", "ok")
+    e3 = log.record(Actor(kind="agent", id="w"), "a2", "draft", "d1", "ok")
+    assert log.head() == (3, e3.entry_hash)
+
+
+def test_verify_expected_head_detects_tail_truncation():
+    conn = connect()
+    log = AuditLog(conn)
+    log.record(Actor(kind="agent", id="w"), "a0", "draft", "d1", "ok")
+    log.record(Actor(kind="agent", id="w"), "a1", "draft", "d1", "ok")
+    log.record(Actor(kind="agent", id="w"), "a2", "draft", "d1", "ok")
+    h = log.head()
+
+    conn.execute("DELETE FROM audit_log WHERE id = (SELECT MAX(id) FROM audit_log)")
+    conn.commit()
+
+    # Documented limitation: a bare chain-walk can't see a missing tail —
+    # the surviving prefix is still internally consistent.
+    assert log.verify() is True
+    # Pinning the previously-recorded head catches the truncation.
+    assert log.verify(expected_head=h) is False

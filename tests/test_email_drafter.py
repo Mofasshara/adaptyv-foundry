@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import pytest
 
 from adaptyv.agents.email import (EmailDrafter, EmailDraftSchema, build_fact_sheet,
@@ -33,6 +31,15 @@ def test_substitute_facts_replaces_token():
 def test_substitute_facts_raises_on_unresolved_token():
     with pytest.raises(UnresolvedPlaceholderError):
         substitute_facts("Kd was {{kd_mean_unknown}}.", {"kd_mean_binder-1": "1.20e-09 M"})
+
+
+def test_substitute_facts_raises_on_unresolved_hyphenated_token():
+    # Regression test for the exact bug this fix closed: a well-formed but
+    # UNKNOWN hyphenated placeholder (the realistic hallucination shape, since
+    # real fact_sheet keys are hyphenated) must still be caught, not silently
+    # passed through unmatched-and-unraised.
+    with pytest.raises(UnresolvedPlaceholderError):
+        substitute_facts("Kd was {{kd_mean_binder-2}}.", {"kd_mean_binder-1": "1.20e-09 M"})
 
 
 class _FakeParseResponse:

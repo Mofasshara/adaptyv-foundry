@@ -11,9 +11,9 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 8     |
+| ✅ Done       | 14    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 25    |
+| ⏳ Pending    | 19    |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** ≈46h (~5.75d) — of which ≈13h is labeled stretch
@@ -59,19 +59,20 @@
 | 7 | LiveTransport (idempotent-only retry, Retry-After, real error body) | ✅ Done | 1h30m | 2026-07-24 11:52 | 2026-07-24 12:02 | core |
 | 8 | Minimal Typer CLI + final review & fix wave | ✅ Done | 45m | 2026-07-24 12:04 | 2026-07-24 12:30 | core; 44/44 tests green |
 
-### Phase 2 — Governance Layer  ⏳
+### Phase 2 — Governance Layer  ✅
 
-**Goal:** Human-in-the-loop approval state machine + audit trail the agent and MCP write through.
-**Phase estimate:** ~6h (~2h of it stretch)
+**Goal:** Human-in-the-loop approval state machine + audit trail the agent and MCP write through. (Plan: `docs/superpowers/plans/2026-07-24-phase2-governance.md`)
+**Phase estimate:** ~6h45m (~1h of it stretch)
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 0 | Governance domain models + errors + sqlite helper | ⏳ Pending | 45m | — | — | core |
-| 1 | Append-only, **hash-chained** SQLite audit log + `verify()` | ⏳ Pending | 1h30m | — | — | core (chain moved from #4) |
-| 2 | Draft approval state machine (PendingReview→Approved/Rejected/Sent); agent cannot self-approve | ⏳ Pending | 1h30m | — | — | core |
-| 3 | Critical-anomaly hard-block + human acknowledgement | ⏳ Pending | 1h | — | — | core |
-| 4 | `adaptyv review` + `adaptyv audit` CLI over the governance store | ⏳ Pending | 1h | — | — | core |
-| 5 | Feedback store for corrected drafts (flywheel source) | ⏳ Pending | 1h | — | — | **stretch** |
+| 0 | Governance domain models + errors + sqlite helper | ✅ Done | 45m | 2026-07-24 19:04 | 2026-07-24 19:06 | core |
+| 1 | Append-only, **hash-chained** SQLite audit log + `verify()` | ✅ Done | 1h30m | 2026-07-24 19:08 | 2026-07-24 19:10 | core (chain moved from #4) |
+| 2 | Draft approval state machine (PendingReview→Approved/Rejected/Sent); agent cannot self-approve | ✅ Done | 1h30m | 2026-07-24 19:12 | 2026-07-24 19:14 | core |
+| 3 | Critical-anomaly hard-block + human acknowledgement | ✅ Done | 1h | 2026-07-24 19:16 | 2026-07-24 19:17 | core |
+| 4 | `adaptyv review` + `adaptyv audit` CLI over the governance store | ✅ Done | 1h | 2026-07-24 19:19 | 2026-07-24 19:21 | core |
+| 5 | Feedback store for corrected drafts (flywheel source) | ✅ Done | 1h | 2026-07-24 19:23 | 2026-07-24 19:24 | **stretch**; built |
+| 6 | Final review + 2 fix waves (atomic state+audit commit, tail-truncation detect, CLI error handling) | ✅ Done | 45m | 2026-07-24 19:25 | 2026-07-24 19:35 | core; 71/71 tests green |
 
 ### Phase 3 — ExperimentWatcher Agent  ⏳
 
@@ -137,3 +138,4 @@
 | 2026-07-24 15:32 | MCP→SDK mechanism changed from auto-spawned FastAPI sidecar to a subprocess JSON bridge (`python -m adaptyv --json`) | Codex flagged (and user agreed) that stdio-MCP auto-spawning a web server hides port/readiness/cleanup/version-skew complexity not worth it for a take-home | Phase 4 tasks re-specified around a per-call subprocess bridge; removed FastAPI from core stack | Phase 4 built a FastAPI sidecar auto-spawned by the MCP |
 | 2026-07-24 15:34 | Re-sequenced to core-first; tagged hash-chain audit, 3 loops, live LLM-judge, TestPyPI as stretch; added SDK write methods to Phase 1 | Codex flagged ~41h scope risked leaving hard requirements shallow, and that Phase 1 lacked the write methods Phase 4's MCP needs | Phase 1 grew (+write tasks); Phases 2/5/6 items tagged core/stretch; total ≈46h with ~13h stretch | All 30 tasks equal priority; Phase 1 read-only |
 | 2026-07-24 13:00 | Phase 2 audit **hash-chain + `verify()` moved from stretch into the core audit task**; only the feedback store stays stretch. Split Phase 2 into 6 finer plan tasks (models, audit, approval, anomaly-gate, CLI, feedback) | The chain is a few lines and an unverifiable chain has no demo/governance value; keeping them together avoids a schema migration | Phase 2 core now delivers a tamper-evident, verifiable log; feedback store remains the only Phase 2 stretch item | Hash-chain + verify were Phase 2 task #4 (stretch) |
+| 2026-07-24 19:36 | Phase 2 final review found and fixed 2 integrity gaps: (1) draft state writes and their audit entry weren't committed atomically — a failed audit write could leave an unaudited state change; (2) `AuditLog.verify()` couldn't detect deletion of the newest entries (tail-truncation) | Whole-branch review reasoned through failure modes the per-task reviews (correctly) didn't check across components; a re-review of the first fix then caught a follow-on gap (no rollback-on-exception, so a failed write could be silently swept into a later commit) | `ApprovalStore` mutations now commit atomically with `AuditLog.record()` and roll back on failure; `AuditLog` gained `head()` + `verify(expected_head=...)` for tail-truncation detection; CLI `list` commands now use the shared error handler; added an honest tamper-evidence-not-tamper-proof docstring | Audit log described only as "hash-chained, append-only" with no atomicity/rollback or truncation-detection contract specified |

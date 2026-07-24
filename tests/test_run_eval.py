@@ -66,3 +66,25 @@ def test_main_returns_one_and_prints_fail_when_a_case_has_a_violation(monkeypatc
     assert exit_code == 1
     assert "[FAIL] deliberately_wrong" in captured.out
     assert "all_sequences_failed" in captured.out
+
+
+def test_main_isolates_a_crashing_case_and_still_runs_the_rest(monkeypatch, capsys):
+    # Real regression case: a promoted case whose experiment_id doesn't resolve
+    # via the active AdaptyvClient (e.g. NotFoundError from the mock transport)
+    # must not crash main() and take every other case's results down with it.
+    healthy = next(c for c in GOLDEN_SET if c.name == "healthy_affinity_panel")
+    crashing_case = GoldenCase(
+        name="unresolvable_promoted_case",
+        experiment_id="99999999-0000-0000-0000-000000000000",
+        expected_critical_rules=frozenset(),
+        expected_fact_keys=frozenset(),
+    )
+    monkeypatch.setattr("evals.run_eval.GOLDEN_SET", [crashing_case, healthy])
+
+    exit_code = main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "[FAIL] unresolvable_promoted_case" in captured.out
+    assert "NotFoundError" in captured.out
+    assert "[PASS] healthy_affinity_panel" in captured.out

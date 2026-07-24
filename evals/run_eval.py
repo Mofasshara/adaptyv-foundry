@@ -53,7 +53,14 @@ def run_case(case: GoldenCase) -> EvalCaseResult:
 
 
 def main() -> int:
-    results = [run_case(case) for case in GOLDEN_SET + load_promoted_cases()]
+    results: list[EvalCaseResult] = []
+    for case in GOLDEN_SET + load_promoted_cases():
+        try:
+            results.append(run_case(case))
+        except Exception as exc:
+            results.append(EvalCaseResult(
+                case=case,
+                violations=[f"eval crashed while running this case: {type(exc).__name__}: {exc}"]))
     total_violations = 0
     for r in results:
         status = "PASS" if not r.violations else "FAIL"

@@ -1,0 +1,89 @@
+import json
+import subprocess
+import sys
+
+from adaptyv.bridge import handle_request
+
+
+def test_unknown_op_returns_structured_error():
+    resp = handle_request({"op": "not_a_real_op", "params": {}})
+    assert resp["ok"] is False
+    assert resp["error"]["type"] == "BridgeError"
+
+
+def test_list_experiments_mock_default():
+    resp = handle_request({"op": "list_experiments", "params": {}})
+    assert resp["ok"] is True
+    codes = {e["code"] for e in resp["result"]}
+    assert "EXP-1001" in codes
+
+
+def test_get_experiment_status():
+    resp = handle_request({"op": "get_experiment_status",
+                           "params": {"experiment_id": "11111111-1111-1111-1111-111111111111"}})
+    assert resp["ok"] is True
+    assert resp["result"]["code"] == "EXP-1001"
+
+
+def test_get_experiment_status_unknown_id_maps_to_adaptyv_error():
+    resp = handle_request({"op": "get_experiment_status",
+                           "params": {"experiment_id": "00000000-0000-0000-0000-0000000000ff"}})
+    assert resp["ok"] is False
+    assert resp["error"]["type"] == "NotFoundError"
+
+
+def test_get_results():
+    resp = handle_request({"op": "get_results",
+                           "params": {"experiment_id": "11111111-1111-1111-1111-111111111111"}})
+    assert resp["ok"] is True
+    assert resp["result"][0]["summary"][0]["result_type"] == "affinity"
+
+
+def test_create_experiment_with_sequences():
+    resp = handle_request({"op": "create_experiment_with_sequences", "params": {
+        "name": "MCP test run", "experiment_type": "affinity",
+        "sequences": [{"aa_string": "MKAA", "name": "binder-x"}]}})
+    assert resp["ok"] is True
+    assert resp["result"]["experiment_id"]
+
+
+def test_search_targets():
+    resp = handle_request({"op": "search_targets", "params": {"search": "IL"}})
+    assert resp["ok"] is True and resp["result"]
+
+
+def test_estimate_cost():
+    resp = handle_request({"op": "estimate_cost", "params": {
+        "experiment_type": "affinity",
+        "sequences": [{"aa_string": "MKAA"}]}})
+    assert resp["ok"] is True
+
+
+def test_add_sequences():
+    resp = handle_request({"op": "add_sequences", "params": {
+        "experiment_code": "EXP-1001", "sequences": [{"aa_string": "MKAA"}]}})
+    assert resp["ok"] is True and resp["result"]["added_count"] == 1
+
+
+def test_draft_customer_update_uses_stub_drafter_by_default(tmp_path):
+    resp = handle_request({"op": "draft_customer_update", "params": {
+        "experiment_id": "11111111-1111-1111-1111-111111111111",
+        "db": str(tmp_path / "gov.db")}})
+    assert resp["ok"] is True
+    assert resp["result"]["status"] == "pending_review"
+
+
+def test_missing_required_param_is_a_structured_bridge_error():
+    resp = handle_request({"op": "get_experiment_status", "params": {}})
+    assert resp["ok"] is False
+    assert resp["error"]["type"] == "BridgeError"
+
+
+def test_cli_entrypoint_end_to_end():
+    proc = subprocess.run(
+        [sys.executable, "-m", "adaptyv", "--json"],
+        input=json.dumps({"op": "list_experiments", "params": {}}),
+        capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0
+    resp = json.loads(proc.stdout)
+    assert resp["ok"] is True and resp["result"]

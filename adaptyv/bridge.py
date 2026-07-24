@@ -139,3 +139,11 @@ def handle_request(request: dict) -> dict:
         return {"ok": False, "error": {"type": "BridgeError", "message": f"missing required param: {exc}"}}
     except (TypeError, ValueError) as exc:
         return {"ok": False, "error": {"type": "BridgeError", "message": f"invalid params: {exc}"}}
+    except Exception as exc:
+        # Catch-all: the bridge's contract is that failure is ALWAYS signaled
+        # via the {"ok": False} envelope, never via an uncaught traceback or a
+        # nonzero process exit code. Anything not matched by the specific
+        # excepts above (e.g. sqlite3.OperationalError from an unwritable db
+        # path, or any future op implementation bug) must still be reported
+        # through this envelope rather than escaping handle_request.
+        return {"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}

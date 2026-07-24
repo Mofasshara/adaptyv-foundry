@@ -79,6 +79,20 @@ def test_missing_required_param_is_a_structured_bridge_error():
     assert resp["error"]["type"] == "BridgeError"
 
 
+def test_unexpected_exception_is_caught_as_ok_false_not_raised():
+    # A real, non-contrived unexpected exception: sqlite3.OperationalError
+    # from an unwritable/nonexistent db directory (exactly what a relative
+    # default db path resolving to the wrong cwd could trigger). This type
+    # is not one of the specifically-handled excepts (AdaptyvError, KeyError,
+    # TypeError, ValueError), so it must be caught by the catch-all clause.
+    resp = handle_request({"op": "draft_customer_update", "params": {
+        "experiment_id": "11111111-1111-1111-1111-111111111111",
+        "db": "/no_such_dir_xyz_123/gov.db"}})
+    assert resp["ok"] is False
+    assert resp["error"]["type"] == "OperationalError"
+    assert "unable to open database file" in resp["error"]["message"]
+
+
 def test_cli_entrypoint_end_to_end():
     proc = subprocess.run(
         [sys.executable, "-m", "adaptyv", "--json"],
@@ -87,3 +101,20 @@ def test_cli_entrypoint_end_to_end():
     assert proc.returncode == 0
     resp = json.loads(proc.stdout)
     assert resp["ok"] is True and resp["result"]
+
+
+def test_cli_entrypoint_never_crashes_on_unexpected_exception():
+    # Same unexpected-exception scenario as above, but through the full CLI
+    # entrypoint: proves __main__.main() never lets an uncaught exception
+    # produce a nonzero exit code or a bare traceback, even for error types
+    # handle_request's specific excepts don't name.
+    proc = subprocess.run(
+        [sys.executable, "-m", "adaptyv", "--json"],
+        input=json.dumps({"op": "draft_customer_update", "params": {
+            "experiment_id": "11111111-1111-1111-1111-111111111111",
+            "db": "/no_such_dir_xyz_123/gov.db"}}),
+        capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0
+    resp = json.loads(proc.stdout)
+    assert resp["ok"] is False
+    assert resp["error"]["type"] == "OperationalError"

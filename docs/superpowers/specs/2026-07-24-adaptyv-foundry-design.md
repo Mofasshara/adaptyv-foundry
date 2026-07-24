@@ -1,6 +1,7 @@
 # Adaptyv Foundry SDK + MCP Server + Lab Ops Agent — Design Spec
 
-**Status:** Approved design (pending written-spec review)
+**Status:** Approved; revised v2 after Codex pre-implementation review (schema
+corrected from raw spec; sidecar→subprocess bridge; core-first scoping)
 **Date:** 2026-07-24
 **Author:** AI Engineer take-home for Adaptyv Bio (Lausanne)
 **Repo:** `/Users/naloo/Programming/adaptyv-foundry`
@@ -83,19 +84,19 @@ Claude Desktop / Claude Code
 ┌─────▼───────────────────────────────────────────────┐
 │ MCP SERVER  (TypeScript, @modelcontextprotocol/sdk)  │
 │  ~8 task-shaped tools, every param Zod-described      │
-│  sidecar-client → HTTP localhost                      │
-│  auto-spawns the Python sidecar on startup            │
+│  bridge-client → spawns `python -m adaptyv --json`    │
+│  one short-lived Python subprocess per call           │
 │  every state-changing tool → audit log                │
 └─────┬────────────────────────────────────────────────┘
-      │  localhost JSON
+      │  spawn + JSON (stdin/stdout)
 ┌─────▼────────────────────────────────────────────────┐
 │ adaptyv  (Python)  ◀── SINGLE SOURCE OF TRUTH         │
 │  AdaptyvClient: httpx + pydantic v2, sync             │
 │  resources/  experiments · sequences · targets · results
 │  transport:  LiveTransport | MockTransport (fixtures) │
 │  agents/     ExperimentWatcher                         │
-│  governance/ approval workflow + hash-chained audit    │
-│  server.py   `adaptyv serve`   (FastAPI sidecar)       │
+│  governance/ approval workflow + audit log             │
+│  bridge      `python -m adaptyv --json`  (MCP bridge)  │
 │  cli.py      `adaptyv ...`      (Typer, for humans)    │
 └─────┬────────────────────────────────────────────────┘
       │  imported directly (Python → Python)
@@ -116,8 +117,8 @@ Claude Desktop / Claude Code
 ```
 
 The MCP exposes both raw SDK operations **and** the agent's `draft_customer_update`
-capability through the same sidecar, so drafting works via natural language in
-Claude Desktop.
+capability through the same subprocess bridge, so drafting works via natural
+language in Claude Desktop.
 
 ---
 
@@ -127,10 +128,12 @@ Claude Desktop.
 
 - **Client:** `AdaptyvClient(api_key=None, mock=False, base_url=...)`, synchronous,
   built on `httpx` + `pydantic v2`.
-- **Models** (`models.py` / `models/`): pydantic models mirroring the OpenAPI
-  schemas — `ExpInfo`, `CreateExpRequest/Response`, `SequenceInfo`,
-  `SequenceAddRequest`, `TargetInfo/Details`, `ResultInfo`, `ResultSummary`,
-  `AffinityResult`, `AffinityReplicate`, `KineticInterval`, etc.
+- **Models** (`models.py`): pydantic models derived from the **raw** OpenAPI schema
+  (verified, not summarized) — incl. a generic `Page[T]` pagination envelope
+  (`items,total,count,offset`), a **discriminated `ResultSummary` union** on
+  `result_type` (`AffinityResult` / `ThermostabilityResult`), distinct list-vs-detail
+  models (`ExperimentListItem` vs `ExpInfo`; `SequenceListItem` vs `SequenceInfo`),
+  and the real enums (`ExperimentStatus` = draft…done, etc.).
 - **Resources** (namespaced, ergonomic):
   - `client.experiments` → `create`, `list`, `get`, `submit`, `results`,
     `cost_estimate`
@@ -140,8 +143,8 @@ Claude Desktop.
   - thin extras: `client.quotes`, `client.tokens.attenuate`, `client.whoami`
 - **Transport seam (key design):** a `Transport` Protocol with two
   implementations:
-  - `LiveTransport` — real HTTP to Foundry; bearer token from env; retry + backoff
-    on 429/5xx.
+  - `LiveTransport` — real HTTP to Foundry; bearer token from env; **idempotent-only**
+    retry honoring `Retry-After` on 429/5xx.
   - `MockTransport` — serves JSON fixtures from `adaptyv/mocks/fixtures/`; **no key
     needed**. This *is* demo mode, and it feeds the MCP demo and the evals.
 - **Typed errors:** `AdaptyvError → {AuthError, NotFoundError, RateLimitError,
@@ -152,15 +155,18 @@ Claude Desktop.
   `adaptyv-foundry-sdk` on **TestPyPI**. README shows the aspirational
   `pip install adaptyvbio` with an honest note about the demo namespace.
 - **Human CLI (`cli.py`, Typer):** `adaptyv experiments list`, `adaptyv results
-  get <id>`, `adaptyv serve`, `adaptyv watch`, `adaptyv review`, `adaptyv audit`.
+  get <id>`, `adaptyv watch`, `adaptyv review`, `adaptyv audit`, plus
+  `python -m adaptyv --json <op>` (the MCP bridge entrypoint).
 
-### 4.2 Sidecar (`server.py`, FastAPI)
+### 4.2 MCP bridge (`python -m adaptyv --json`)
 
-- `adaptyv serve` starts a localhost FastAPI app exposing SDK operations **and**
-  the agent's drafting capability as JSON endpoints.
-- Maps SDK exceptions → HTTP status codes.
-- Writes audit entries for state-changing calls.
-- Bound to localhost only; token via env; not a public surface.
+- A subprocess entrypoint the MCP **spawns per call**: reads a JSON op (argv/stdin),
+  invokes the SDK (incl. the agent's drafting capability), writes a JSON result or
+  typed-error to stdout. **No long-running server, ports, or readiness handshake** —
+  this replaces the earlier FastAPI sidecar (see decision #9).
+- Maps SDK exceptions → structured JSON errors.
+- Writes audit entries for state-changing ops.
+- Runs in mock or live mode via env; not a network surface.
 
 ### 4.3 MCP server (TypeScript, `mcp/`)
 
@@ -177,25 +183,31 @@ Claude Desktop.
   8. `draft_customer_update` — invoke the agent to draft a `PendingReview` email.
 - Every parameter carries a Zod `.describe()`; each tool has a model-facing
   description written for the agent, not copied from the REST docs.
-- **Auto-spawns the sidecar** on startup (child process) so the reviewer runs one
-  command; degrades with a clear error if Python is unavailable.
-- State-changing tools write to the audit log (via the sidecar).
+- **Spawns the bridge per call** (`python -m adaptyv --json`) so the reviewer runs
+  one command; degrades with a clear error if Python is unavailable.
+- State-changing tools write to the audit log (via the bridge).
 - `draft_customer_update` produces a draft **only** — it cannot approve or send.
 
 ### 4.4 ExperimentWatcher agent (`adaptyv/agents/`)
 
-- **`AnomalyDetector`** (`anomaly.py`) — pure, deterministic, fully unit-tested.
-  Rule set (thresholds configurable):
+- **`AnomalyDetector`** (`anomaly.py`) — pure, deterministic, fully unit-tested,
+  driven by a **versioned anomaly policy** (an explicit input, not hardcoded):
+  thresholds, positive-control identity, expected-value ranges, units, and
+  missing-data semantics. The OpenAPI result carries control identity + relative
+  performance but **no authoritative expected range**, so that range lives in the
+  policy, not the code. Rules (severities set by policy):
   - all sequences failed / no measurable expression → **critical**
-  - positive control outside expected range → **critical**
-  - `Kd` outside plausible bounds → warning
+  - positive control outside its policy-defined range → **critical**
+  - `Kd` outside policy bounds → warning
   - missing/insufficient replicates → warning
-  - Each finding: `{rule, severity, evidence, affected_ids}`.
-- **`EmailDrafter`** (`email.py`) — Claude (latest model; exact IDs/params
-  confirmed via the `claude-api` skill at build time) turns `ResultSummary` +
-  anomaly findings into a plain-English customer update. **Numbers are injected
-  from source data, never generated by the model** (the prompt receives structured
-  facts; the model composes prose around them).
+  - Each finding: `{rule, severity, evidence, affected_ids, policy_version}`.
+- **`EmailDrafter`** (`email.py`) — Claude (model IDs/params via the `claude-api`
+  skill at build time). To keep numbers trustworthy the model emits prose with
+  **typed fact placeholders** (e.g. `{{kd_mean_binder1}}`), and the agent then
+  **substitutes validated numeric strings** from the source data; a deterministic
+  guard rejects any unresolved or unknown placeholder. This is stronger than
+  free-form prose (where a model can still invent a figure) but **not a hard
+  mathematical guarantee** — hence the eval guard backs it up.
 - **`Watcher`** (`watcher.py`) — orchestrates: find newly-completed experiments →
   detect anomalies → draft email → persist as `PendingReview` → record audit +
   data lineage. Runs once or on an interval (see §6 loops).
@@ -214,55 +226,60 @@ Claude Desktop.
     move to `Approved`/`Sent` until a human explicitly **acknowledges** the
     anomaly (recorded in the audit log).
 - **Audit trail (`audit.py`):**
-  - **Hash-chained, append-only SQLite** — each entry stores a hash of the
-    previous entry (tamper-evident chain), verifiable via `adaptyv audit verify`.
-  - Fields: `id, ts, actor (agent|human|token-id), action, target (experiment/
-    result/draft id), inputs_ref, outcome, prev_hash, entry_hash`.
+  - **Append-only SQLite (core).** Fields: `id, ts, actor (agent|human|token-id),
+    action, target (experiment/result/draft id), inputs_ref, outcome`.
   - **Data lineage** per draft: which `result_id`s and which exact numeric values
-    fed the email — proving groundedness.
-  - Stores references/hashes rather than dumping full sensitive payloads
-    (data minimization).
-  - `adaptyv audit` lists/queries; `adaptyv audit verify` checks the chain.
+    fed the email — proving groundedness. The audit keeps references/hashes rather
+    than full sensitive payloads (data minimization).
+  - **Feedback store (separate table):** the *content* of human edits/corrections
+    lives here, referenced by audit events, so the flywheel can reconstruct
+    corrected examples (which pure hashes could not).
+  - **Hash-chaining + `adaptyv audit verify` (stretch):** each entry seals the
+    previous entry's hash for tamper-evidence, with a defined canonical encoding and
+    transactional write. This is honestly application-level tamper-*evidence*, not
+    tamper-proof; a signed exported head checkpoint is a documented next step.
+  - `adaptyv audit` lists/queries.
 
 ### 4.6 Feedback loops (`adaptyv/loops/` + eval harness)
 
-1. **Eval→improve loop (offline):** `make eval` runs the golden set through the
-   drafter, scores with the judge, and reports regressions; failures drive
-   prompt/rule fixes. Explicit, repeatable, CI-friendly.
-2. **Human-feedback flywheel:** human edits/rejections captured in the audit log
-   can be **promoted into the eval golden set** (`adaptyv evals promote <draft>`),
-   so real reviewer corrections become future regression tests. The governance
-   layer doubles as the improvement data source.
-3. **Autonomous watch loop (runtime):** `adaptyv watch --interval N` polls for
-   newly-completed experiments and drafts+queues them, repeating — makes the agent
-   operational, not one-shot.
+1. **Eval→improve loop (offline, core):** `make eval` runs the golden set through
+   the drafter, runs the deterministic guards, and reports regressions; failures
+   drive prompt/rule fixes. Repeatable, CI-friendly.
+2. **Human-feedback flywheel (stretch):** human corrections captured in the
+   **feedback store** are **promoted into the golden set** (`adaptyv evals promote
+   <draft>`), so real reviewer edits become future regression tests.
+3. **Autonomous watch loop (stretch):** `adaptyv watch --interval N` polls for
+   newly-completed experiments — keyed by a **durable idempotency key**
+   (`experiment_id, result_id, result_version, drafter_version`) so restarts and
+   concurrent runs don't duplicate drafts — and drafts+queues them.
 
 ### 4.7 Eval suite (`evals/`)
 
 - **Golden set:** `results → expected-email-facts` cases (incl. the anomalous
   fixtures).
 - **Two layers:**
-  - *Deterministic guards* (pytest): every number in the email traces to source
-    data (no hallucination); required facts present; critical anomalies flagged;
-    email never emitted in an approvable state when a critical anomaly exists.
-  - *LLM-judge* (G-Eval style, Anthropic SDK): rubric scoring **accuracy /
-    completeness / tone**, each with a pass threshold; regressions fail CI.
-- Judge model and drafting model confirmed via the `claude-api` skill at build
-  time (default lean: a current Sonnet-class model for drafting; a strong model
-  for judging).
+  - *Deterministic guards* (pytest, **core, the primary gate**): every fact
+    placeholder resolves to a source value (no invented numbers); required facts
+    present; critical anomalies flagged; a draft is never approvable while a
+    critical anomaly is unacknowledged.
+  - *LLM-judge* (**stretch**, Anthropic SDK): rubric scoring **accuracy /
+    completeness / tone**, reported as an evaluation **artifact** (scores + trend),
+    **not a hard CI gate** — it needs a key and has run-to-run variance.
+- Judge/drafting model IDs confirmed via the `claude-api` skill at build time.
 
 ---
 
 ## 5. Mock mode, fixtures & data model
 
-- Fixtures under `adaptyv/mocks/fixtures/*.json`, validated against the pydantic
-  models by a **contract test** (so mock data can never drift from the real schema
-  shape).
+- Fixtures under `adaptyv/mocks/fixtures/*.json`, validated by a **contract test**
+  against the **pinned OpenAPI JSON Schema** (`tests/data/openapi.json`, sha256
+  recorded) *and* the pydantic models — so mock data cannot drift from the real API
+  contract. Lists carry the real `{items,total,count,offset}` envelope.
 - Fixture scenarios include:
-  - a healthy completed experiment with affinity + kinetic results (happy path),
+  - a healthy `done` experiment with affinity + kinetic results (happy path),
   - **all-sequences-failed** (critical anomaly),
-  - **control-out-of-range** (critical anomaly),
-  - experiments in Draft / InReview / running states (for status tools).
+  - **control-out-of-policy** (critical anomaly),
+  - experiments in `draft` / `in_production` / `in_review` states (for status tools).
 - The same fixtures drive: SDK unit tests, MCP demo, agent runs, and the eval
   golden set — one source of demo truth.
 
@@ -272,7 +289,7 @@ Claude Desktop.
 
 - **SDK:** typed exception hierarchy; ret/backoff on 429/5xx; validation errors on
   malformed requests before hitting the wire.
-- **Sidecar:** SDK exceptions → HTTP codes with structured error bodies.
+- **Bridge:** SDK exceptions → structured JSON errors on stdout.
 - **MCP:** tool errors returned as structured, model-readable messages (so Claude
   can recover or explain), never raw stack traces.
 - **Agent:** if results are incomplete/missing, degrade gracefully; the anomaly
@@ -283,15 +300,16 @@ Claude Desktop.
 ## 7. Testing strategy (TDD)
 
 - **SDK:** unit tests against `MockTransport`; contract test validating every
-  fixture against pydantic models; error-path tests (auth/404/429).
+  fixture against the pinned OpenAPI schema + pydantic models; error-path tests
+  (auth/404/429); mock/live shape parity (pagination envelopes).
 - **AnomalyDetector:** exhaustive deterministic unit tests per rule + severity.
 - **Governance:** audit hash-chain integrity tests (append + tamper detection);
   approval state-machine tests incl. the critical-anomaly hard-block; test that
   the agent cannot self-approve.
-- **MCP:** tool tests against a stubbed sidecar (params validated, right endpoint
-  called, errors surfaced).
-- **Evals:** deterministic guards run in CI; LLM-judge run behind a marker (needs
-  API key) with thresholds.
+- **MCP:** tool tests against a stubbed bridge (params validated, right op called,
+  errors surfaced).
+- **Evals:** deterministic guards run in CI (the gate); LLM-judge behind a marker
+  (needs a key), reported as an artifact rather than a gate.
 - Nothing is claimed "done/passing" without `verification-before-completion`
   output.
 
@@ -308,9 +326,10 @@ Claude Desktop.
 - **Data minimization:** audit log stores references/hashes, not full sensitive
   payloads.
 - **Retention / residency:** documented as considerations; not implemented (YAGNI).
-- **Human oversight & auditability:** the HITL gate + hash-chained audit map onto
-  recognized governance principles (human oversight, auditability, least
-  privilege, data minimization) without overclaiming an enterprise GRC stack.
+- **Human oversight & auditability:** the HITL gate + append-only audit (hash-chained
+  in the stretch tier) map onto recognized governance principles (human oversight,
+  auditability, least privilege, data minimization) without overclaiming an
+  enterprise GRC stack.
 
 ---
 
@@ -322,28 +341,29 @@ adaptyv-foundry/
 ├── ROADMAP.md                     # phases/tasks/estimates (created after spec approval)
 ├── LEARNING_GUIDE.md              # concept explanations (created after spec approval)
 ├── pyproject.toml
-├── Makefile                       # demo, test, eval, serve
+├── Makefile                       # demo, test, eval, bridge
 ├── adaptyv/                       # Python SDK (single source of truth)
-│   ├── client.py  models*  transport.py
-│   ├── resources/                 # experiments, sequences, targets, results, ...
+│   ├── client.py  models.py  transport.py  live_transport.py  errors.py
+│   ├── resources/                 # experiments, sequences, targets, results
 │   ├── agents/                    # anomaly.py, email.py, watcher.py
-│   ├── governance/                # approval.py, audit.py
-│   ├── loops/                     # watch + flywheel helpers
-│   ├── server.py  cli.py
+│   ├── governance/                # approval.py, audit.py, feedback.py
+│   ├── loops/                     # watch + flywheel helpers (stretch)
+│   ├── __main__.py  cli.py        # `python -m adaptyv --json` bridge + Typer CLI
 │   └── mocks/fixtures/*.json
 ├── mcp/                           # TypeScript MCP server
-│   ├── src/index.ts  src/sidecar-client.ts  src/tools/*.ts
+│   ├── src/index.ts  src/bridge-client.ts  src/tools/*.ts
 │   └── package.json  tsconfig.json
-├── evals/                         # golden set + judge + guards
+├── evals/                         # golden set + guards (+ judge, stretch)
+├── tests/data/openapi.json        # pinned OpenAPI spec (contract test)
 └── docs/
-    ├── superpowers/specs/         # this document
+    ├── superpowers/specs|plans/   # this document + phase plans
     └── architecture.md            # diagram + data-flow + governance notes
 ```
 
-**Deliverables:** GitHub repo; TestPyPI-published SDK; one-command MCP + mock
-mode; ExperimentWatcher producing draft + anomaly report; eval suite; README +
-architecture diagram + ROADMAP + LEARNING_GUIDE; a **script** for the 2-minute
-Loom (recording is the user's).
+**Deliverables:** GitHub repo; installable SDK (TestPyPI *stretch*); one-command MCP
++ mock mode; ExperimentWatcher producing draft + anomaly report; eval suite; README +
+architecture diagram + ROADMAP + LEARNING_GUIDE; a **script** for the 2-minute Loom
+(recording is the user's).
 
 ---
 
@@ -355,23 +375,31 @@ Loom (recording is the user's).
 | 2 | SDK distribution | Local + **TestPyPI**, honest README | Avoids brand-squatting Adaptyv's PyPI namespace during an interview |
 | 3 | Demo surface | **CLI + MCP only** (no web dashboard) | Cleanest for a 2-min Loom; least scope risk |
 | 4 | Eval stack | **Hand-rolled LLM-judge + pytest** | Transparent, dependency-light, easy to defend as own work |
-| 5 | MCP↔SDK coupling | **Option A — one brain** (MCP → SDK sidecar) | Literal embodiment of the role; single source of truth |
-| 6 | Audit trail | **Hash-chained append-only SQLite** | Tamper-evident; strong governance story; low cost |
+| 5 | MCP↔SDK coupling | **Option A — one brain** (MCP → SDK) | Literal embodiment of the role; single source of truth |
+| 6 | Audit trail | **Append-only SQLite** (hash-chaining = stretch) | Auditability now; tamper-evidence as a labeled enhancement |
 | 7 | Anomaly gate | **Hard-block until human acknowledges** | Real oversight, not advisory theater |
-| 8 | Loops | eval→improve + human-feedback flywheel + autonomous watch | Coherent "loop engineering" reusing audit+evals; self-refinement deferred |
+| 8 | Loops | eval→improve (core) + flywheel + autonomous watch (stretch) | Coherent "loop engineering" reusing feedback store + evals; self-refinement deferred |
+| 9 | MCP↔SDK **mechanism** | **Subprocess JSON bridge** (`python -m adaptyv --json`), not FastAPI sidecar | Codex review + user: stdio-MCP auto-spawning a web server hides port/readiness/cleanup complexity not worth a take-home |
+| 10 | Schema source of truth | Models derived from **raw parsed** OpenAPI JSON + pinned contract test | An initial summarized `WebFetch` hallucinated the schema; raw parse + pinned schema prevents recurrence |
+| 11 | Scope strategy | **Core-first**; hash-chain, flywheel, autonomous watch, live judge, TestPyPI = stretch | Codex review: protect the hard requirements from being left shallow |
 
 ---
 
 ## 11. Risks & open questions
 
-- **Cross-language runtime coupling** (MCP spawns Python sidecar) adds a Python
-  dependency for the MCP demo. Mitigation: auto-spawn + clear error; document the
-  one prerequisite.
+- **Cross-language coupling** (MCP spawns the Python bridge per call) adds a Python
+  dependency for the MCP demo. Mitigation: per-call subprocess (no server lifecycle)
+  + clear error; document the one prerequisite.
 - **No live API key** — all live-path code is exercised only against `MockTransport`
   and fixtures shaped from the OpenAPI schema; live behavior is best-effort until a
-  key exists. Mitigation: contract tests bind fixtures to the real schema.
+  key exists. Mitigation: the contract test binds fixtures to the **pinned** real
+  schema (sha256 recorded), and mock/live shape parity is tested.
+- **Schema fidelity** — an initial summarized fetch of the OpenAPI spec hallucinated
+  fields/enums/envelopes; a Codex pre-implementation review caught it. Mitigation:
+  models are now derived from **raw parsed JSON**, never a summary; the pinned
+  contract test guards against regressions. (See `feedback_verify_api_schemas_raw`.)
 - **LLM cost/determinism in evals** — judge calls cost tokens and vary; mitigate
-  with a small golden set, thresholds, and deterministic guards as the primary
-  gate.
+  with a small golden set and deterministic guards as the primary gate (judge is a
+  reported artifact, not a CI gate).
 - **Model IDs/params** — confirmed via the `claude-api` skill at implementation
   time, not hardcoded from memory.

@@ -26,7 +26,7 @@ Claude Desktop / Code                         ← a person, talking in plain Eng
    ▼  (MCP over stdio)
 MCP SERVER (TypeScript)                        ← the receptionist: turns chat into actions
    │
-   ▼  (localhost HTTP)
+   ▼  (spawns per call)
 adaptyv SDK (Python)  ◀── SINGLE SOURCE OF TRUTH   ← the translator: speaks fluent "lab API"
    ├─ transport: Live | Mock (fixtures)        ← real lab line, or a rehearsal stand-in
    ├─ agents: ExperimentWatcher                ← the assistant that drafts emails
@@ -180,18 +180,18 @@ Alternative considered: LLM-based anomaly detection. Rejected for the *gate* (no
 **Key things to know**
 - Rules and thresholds live in one place so a scientist could tune them without touching agent logic.
 
-### EmailDrafter with fact injection — the ghostwriter who can't make up numbers
+### EmailDrafter with placeholder substitution — the ghostwriter who leaves blanks
 
 **What it is**
-The drafter is a **ghostwriter handed a fact sheet.** Claude writes the friendly prose, but every number in the email is *injected from the real results* — the model composes sentences around given facts, it never sources the figures itself.
+The drafter is a **ghostwriter who writes with numbered blanks.** Claude writes the friendly prose but, instead of typing figures, it leaves typed placeholders (like `{{kd_mean_binder1}}`); the agent then fills each blank with the exact validated number from the real results. The model shapes the sentences; it never sources the figures itself.
 
 **The problem it solves**
-LLMs can "hallucinate" plausible-but-wrong numbers. Emailing a customer a made-up binding affinity would be a serious error. Fact injection makes hallucinated numbers structurally impossible to introduce.
+LLMs can "hallucinate" plausible-but-wrong numbers. Emailing a customer a made-up binding affinity would be a serious error. The placeholder-substitution approach makes it very hard for a wrong number to slip through — and a deterministic guard rejects any unresolved or unknown placeholder — though it is a strong safeguard, not an absolute mathematical guarantee, which is why the eval guard backs it up.
 
 **How it works**
-1. The agent extracts the exact figures and anomaly findings into a structured fact sheet.
-2. Claude receives the fact sheet and a tone instruction, and returns prose.
-3. An eval guard then checks that *every number in the output traces back to the fact sheet* — belt and braces.
+1. The agent extracts the exact figures and anomaly findings, each under a typed placeholder id.
+2. Claude receives the available placeholder ids and a tone instruction, and returns prose containing placeholders (not raw numbers).
+3. The agent substitutes each placeholder with its validated numeric string; a guard rejects any unresolved or unknown placeholder — belt and braces.
 
 **Why we chose it for this project**
 Alternative considered: let the model read raw results and summarize freely. Rejected — that's exactly where hallucinations enter. What we gave up: a little fluency/flexibility, for correctness we can prove.
@@ -225,25 +225,25 @@ It's a hard requirement of the role (TypeScript MCP). The design choice within i
 - Tool descriptions are written *for the model to read* — they're prompt engineering, not API docs.
 - Every parameter is described so Claude fills them correctly.
 
-### The SDK-sidecar pattern — one brain, two languages
+### The SDK bridge pattern — one brain, two languages
 
 **What it is**
-Our SDK is Python; the MCP must be TypeScript; and TypeScript can't directly import Python. The sidecar is a **little intercom on localhost**: the Python SDK exposes itself over a tiny local web service, and the TypeScript MCP talks to it through that intercom.
+Our SDK is Python; the MCP must be TypeScript; and TypeScript can't directly import Python. The bridge is a **dumbwaiter between two floors**: for each request the TypeScript MCP drops a small JSON note down to a short-lived Python process (`python -m adaptyv --json`), the Python side does the real work via the SDK, and sends a JSON answer back up. No phone line stays open — each call is its own quick trip.
 
 **The problem it solves**
-Without it, we'd have to *re-implement* all the lab logic (auth, retries, mock mode, result parsing) a second time in TypeScript — two brains to keep in sync, double the bugs. The sidecar keeps the Python SDK as the single source of truth.
+Without it, we'd have to *re-implement* all the lab logic (auth, retries, mock mode, result parsing) a second time in TypeScript — two brains to keep in sync, double the bugs. The bridge keeps the Python SDK as the single source of truth.
 
 **How it works**
-1. `adaptyv serve` starts a small local (FastAPI) service wrapping the SDK.
-2. The MCP server auto-spawns it on startup and calls it over localhost.
-3. One codebase owns all the real logic; the MCP is a thin translator.
+1. The MCP receives a tool call from Claude.
+2. It **spawns `python -m adaptyv --json <op>`**, passing the request as JSON.
+3. The Python process runs the SDK/agent and prints a JSON result (or a typed error), then exits. One codebase owns all the real logic; the MCP is a thin translator.
 
 ```
-MCP (TS) ──localhost──▶ sidecar (Python/FastAPI) ──▶ adaptyv SDK ──▶ lab
+MCP (TS) ──spawn + JSON──▶ python -m adaptyv --json ──▶ adaptyv SDK ──▶ lab
 ```
 
 **Why we chose it for this project**
-Alternative considered: give the MCP its own thin TypeScript client and share only fixtures. Simpler to run, but duplicates logic across two languages. We chose the sidecar because it's the literal embodiment of the role — "wrap a capability once, make it reusable everywhere" — which is exactly what this job is about. What we gave up: the demo now needs both Python and Node present (mitigated by auto-spawn).
+Two alternatives were considered. (1) An *auto-spawned FastAPI sidecar* — a long-running local web server the MCP starts and calls over localhost. A Codex review flagged that starting a web server from a stdio MCP hides real complexity: port allocation, a readiness handshake, process cleanup, and version skew. (2) A *separate thin TypeScript client* — simplest to run, but duplicates logic across two languages. The **subprocess bridge** is the middle path: it keeps the Python SDK as the one brain ("wrap once, reuse everywhere") without any server lifecycle to get wrong. What we gave up: a tiny per-call process-startup cost, which is negligible at demo scale.
 
 ---
 
@@ -303,7 +303,7 @@ The elegant part: the flywheel *reuses components we already built for other rea
 - **Transport** — the swappable "phone line" the SDK uses (live or mock).
 - **Fixture** — a canned example response used for demos and tests.
 - **Contract test** — a test proving mock data still matches the real schema.
-- **Sidecar** — a small helper service running beside the main app, here exposing the Python SDK to the TypeScript MCP over localhost.
+- **Subprocess bridge** — a short-lived Python process (`python -m adaptyv --json`) the TypeScript MCP spawns per call to reach the Python SDK, exchanging JSON.
 - **MCP (Model Context Protocol)** — a standard that lets AI assistants call your tools.
 - **Tool (MCP)** — one action Claude can invoke, with a name, description, and typed parameters.
 - **Zod** — the TypeScript library that describes and validates tool parameters.
@@ -328,7 +328,7 @@ The elegant part: the flywheel *reuses components we already built for other rea
 "It takes Adaptyv's lab — which today mostly only engineers can drive — and makes it usable by talking to Claude. I built a clean Python SDK over the Foundry API, wrapped it in a TypeScript MCP server so anyone can run experiments and pull results in plain English, and added an agent that drafts the customer result email automatically. Crucially it never sends unreviewed — there's a human sign-off gate, a tamper-evident audit log, and an eval suite that scores the drafts, so it's automation the team can actually trust."
 
 **Technical version (senior engineer):**
-"The Python SDK is the single source of truth — hand-written httpx + pydantic v2, with a Transport protocol so `mock=True` swaps in fixture-backed responses; a contract test binds fixtures to the models. The TypeScript MCP doesn't re-implement HTTP — it delegates to the SDK via an auto-spawned FastAPI sidecar on localhost, so logic lives in one place. Tools are task-shaped, not 1:1 CRUD. The ExperimentWatcher splits detection (deterministic rule engine, so the safety gate is explainable) from description (Claude drafts prose around injected facts, so numbers can't hallucinate). Governance is a hash-chained SQLite audit log plus an approval state machine where the agent can't self-approve and critical anomalies hard-block. Quality is deterministic guards plus an LLM-judge on accuracy/completeness/tone, and three feedback loops — including a flywheel that promotes audited human corrections into the eval golden set."
+"The Python SDK is the single source of truth — hand-written httpx + pydantic v2 modelled from the *raw* OpenAPI spec (discriminated result unions, a pagination envelope, list-vs-detail models), with a Transport protocol so `mock=True` swaps in fixture-backed responses, and a contract test that validates fixtures against the pinned OpenAPI JSON Schema. The TypeScript MCP doesn't re-implement HTTP — it delegates to the SDK via a subprocess JSON bridge (`python -m adaptyv --json`), so logic lives in one place with no server lifecycle to manage. Tools are task-shaped, not 1:1 CRUD. The ExperimentWatcher splits detection (a deterministic, policy-driven rule engine, so the safety gate is explainable) from description (Claude writes prose with typed placeholders that the agent substitutes with validated numbers, so figures can't be invented). Governance is an append-only SQLite audit log (hash-chained in the stretch tier) plus an approval state machine where the agent can't self-approve and critical anomalies hard-block. Quality is deterministic guards as the CI gate, with an LLM-judge and feedback flywheel as reported/stretch layers."
 
 **Business version (executive / regulator):**
 "We made an existing capability — the lab's ordering and results system — usable by the whole company through normal conversation, and we automated the drafting of customer result emails. We built in the controls a regulated business needs: a person must approve every customer email, the system blocks anything with a serious data problem until a human signs off, and every action is recorded in a logbook that can't be quietly altered. We only store the minimum sensitive data, and we continuously grade the AI's output so we'd know immediately if quality slipped. The result is faster customer communication with accountability built in, not bolted on."

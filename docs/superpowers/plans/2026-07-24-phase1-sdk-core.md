@@ -1,59 +1,61 @@
-# Phase 1 — Adaptyv Python SDK Core — Implementation Plan
+# Phase 1 — Adaptyv Python SDK Core — Implementation Plan (v2, schema-corrected)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the typed, sync Python SDK core (`adaptyv`) — models, pluggable transport with mock mode, client + resource namespaces, live HTTP transport, and a minimal CLI — so that `AdaptyvClient(mock=True)` returns typed lab data with no API key.
+> **v2 note (2026-07-24):** This plan was rewritten after a Codex review proved the
+> v1 models were built on a hallucinated schema summary. Every model, enum, and
+> envelope below is derived from the **raw** OpenAPI JSON
+> (`https://foundry-api-public.adaptyvbio.com/api/v1/openapi.json`, OpenAPI 3.1.0,
+> API v0.0.2, sha256 `d3b4828f059ebfb7cf10314bb44125fac735042547250fca3143fa44353652c8`),
+> parsed deterministically — not via a summarizing fetch. See
+> `feedback_verify_api_schemas_raw` memory.
 
-**Architecture:** Hand-written `httpx` + `pydantic v2` client. A `Transport` protocol decouples the client from I/O, with `MockTransport` (JSON fixtures, no key) and `LiveTransport` (real API). Resources are thin namespaces on the client. This SDK is the single source of truth the later MCP server, agent, and evals all reuse.
+**Goal:** Build the typed, sync Python SDK core (`adaptyv`) — models faithful to the real
+API, pluggable transport with mock mode, paginated read + write resources, live HTTP
+transport, and a minimal CLI — so `AdaptyvClient(mock=True)` returns typed lab data with
+no API key, and the mock/live shapes are identical.
 
-**Tech Stack:** Python 3.11+, pydantic v2, httpx, Typer (CLI), pytest, respx (httpx mocking).
+**Architecture:** Hand-written `httpx` + `pydantic v2`. A `Transport` protocol decouples
+the client from I/O; `MockTransport` (fixtures) and `LiveTransport` (real API) return the
+**same** JSON shapes, including the `{items,total,count,offset}` pagination envelope. This
+SDK is the single source of truth the later MCP (via a subprocess JSON bridge), agent, and
+evals all reuse.
+
+**Tech Stack:** Python 3.11+, pydantic v2, httpx, Typer, pytest, respx, jsonschema.
 
 ## Global Constraints
 
-- Python **3.11+** (`requires-python = ">=3.11"`).
-- Import package name is **`adaptyv`**; distribution name is **`adaptyv-foundry-sdk`** (TestPyPI). Do NOT publish to real PyPI.
-- Sync only — no `async`/`await` anywhere in the SDK.
-- pydantic **v2** API (`model_validate`, `model_dump`, `Field`, `field_validator`).
-- API base URL default: `https://devs.adaptyvbio.com`; all paths prefixed `/api/v1`.
-- Never log or print API keys. Keys come from the `api_key` arg or `ADAPTYV_API_KEY` env var only.
-- Every task ends green (`pytest -q` passes) and is committed.
-- Follow TDD: failing test first, minimal code, green, commit.
+- Python **3.11+**. Use `python3`/`python3 -m pip` (the environment exposes `python3`,
+  not `python`); do all work inside a venv: `python3 -m venv .venv && . .venv/bin/activate`.
+- Import package name **`adaptyv`**; distribution **`adaptyv-foundry-sdk`** (TestPyPI). Never publish to real PyPI.
+- Sync only — no `async`.
+- pydantic **v2** (`model_validate`, `Field`, `Annotated[... , Field(discriminator=...)]`, `ConfigDict`).
+- API base URL default `https://devs.adaptyvbio.com`; paths prefixed `/api/v1`.
+- **All list endpoints return `{items, total, count, offset}`** — never a bare array.
+- Resource path IDs are **UUIDs** (`/experiments/{experiment_id}` is `format: uuid`).
+- Response models use `ConfigDict(extra="ignore")` (forward-compat). Request models are strict.
+- Never log or print API keys (`api_key` arg or `ADAPTYV_API_KEY` env only).
+- Every task ends green (`python3 -m pytest -q`) and is committed. TDD: failing test → minimal code → green → commit.
 
 ---
 
-### Task 1: Project scaffolding
+### Task 1: Scaffolding + vendored spec
 
-**Files:**
-- Create: `pyproject.toml`
-- Create: `adaptyv/__init__.py`
-- Create: `adaptyv/_version.py`
-- Create: `tests/__init__.py`
-- Create: `tests/test_smoke.py`
+**Files:** Create `pyproject.toml`, `adaptyv/__init__.py`, `adaptyv/_version.py`,
+`tests/__init__.py`, `tests/test_smoke.py`, `tests/data/openapi.json`, `README.md`.
 
-**Interfaces:**
-- Consumes: nothing.
-- Produces: importable `adaptyv` package exposing `adaptyv.__version__: str`.
+**Interfaces:** Produces importable `adaptyv` exposing `__version__: str`; a pinned
+`tests/data/openapi.json` for the contract test.
 
-- [ ] **Step 1: Write the failing test**
-
-`tests/test_smoke.py`:
+- [ ] **Step 1: Failing test** — `tests/test_smoke.py`:
 ```python
 import adaptyv
 
-
 def test_package_exposes_version():
-    assert isinstance(adaptyv.__version__, str)
-    assert adaptyv.__version__
+    assert isinstance(adaptyv.__version__, str) and adaptyv.__version__
 ```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `python -m pytest tests/test_smoke.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'adaptyv'`.
-
-- [ ] **Step 3: Write pyproject.toml**
-
-`pyproject.toml`:
+- [ ] **Step 2: Run** `python3 -m pytest tests/test_smoke.py -q` → FAIL (`ModuleNotFoundError`).
+- [ ] **Step 3: `pyproject.toml`:**
 ```toml
 [project]
 name = "adaptyv-foundry-sdk"
@@ -61,14 +63,10 @@ version = "0.1.0"
 description = "Typed Python SDK for the Adaptyv Foundry lab API (unofficial)."
 requires-python = ">=3.11"
 readme = "README.md"
-dependencies = [
-    "httpx>=0.27",
-    "pydantic>=2.7",
-    "typer>=0.12",
-]
+dependencies = ["httpx>=0.27", "pydantic>=2.7", "typer>=0.12"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "respx>=0.21", "fastapi>=0.110", "anthropic>=0.40"]
+dev = ["pytest>=8", "respx>=0.21", "jsonschema>=4.21", "fastapi>=0.110", "anthropic>=0.40"]
 
 [project.scripts]
 adaptyv = "adaptyv.cli:app"
@@ -82,167 +80,136 @@ packages = ["adaptyv"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
-markers = ["live_llm: tests that call a real LLM (need ANTHROPIC_API_KEY)"]
+markers = ["live_llm: needs ANTHROPIC_API_KEY"]
 ```
-
-- [ ] **Step 4: Create package files**
-
-`adaptyv/_version.py`:
-```python
-__version__ = "0.1.0"
-```
-
-`adaptyv/__init__.py`:
+- [ ] **Step 4: Package files.** `adaptyv/_version.py`: `__version__ = "0.1.0"`.
+  `adaptyv/__init__.py`:
 ```python
 from adaptyv._version import __version__
-
 __all__ = ["__version__"]
 ```
-
-`tests/__init__.py`: (empty file)
-
-Create `README.md` with a single line so `readme` resolves:
-```markdown
-# adaptyv-foundry-sdk
-Unofficial typed Python SDK for the Adaptyv Foundry lab API. See docs/.
-```
-
-- [ ] **Step 5: Install editable + run test**
-
-Run: `pip install -e ".[dev]" && python -m pytest tests/test_smoke.py -q`
-Expected: PASS (1 passed).
-
-- [ ] **Step 6: Commit**
-
+  `tests/__init__.py`: empty. `README.md`: one line.
+- [ ] **Step 5: Vendor the pinned spec (for the contract test):**
 ```bash
-git add pyproject.toml adaptyv/ tests/ README.md
-git commit -m "feat: scaffold adaptyv SDK package"
+mkdir -p tests/data
+curl -s -o tests/data/openapi.json https://foundry-api-public.adaptyvbio.com/api/v1/openapi.json
+python3 -c "import hashlib;print(hashlib.sha256(open('tests/data/openapi.json','rb').read()).hexdigest())"
+# expect: d3b4828f059ebfb7cf10314bb44125fac735042547250fca3143fa44353652c8
 ```
+- [ ] **Step 6: Install + run** `python3 -m pip install -e ".[dev]" && python3 -m pytest -q` → PASS.
+- [ ] **Step 7: Commit** `git add -A && git commit -m "feat: scaffold adaptyv SDK + vendor pinned OpenAPI spec"`.
 
 ---
 
-### Task 2: Enums and pydantic models
+### Task 2: Models (schema-faithful)
 
-**Files:**
-- Create: `adaptyv/models.py`
-- Test: `tests/test_models.py`
+**Files:** Create `adaptyv/models.py`; Test `tests/test_models.py`.
 
-**Interfaces:**
-- Consumes: nothing.
-- Produces (all importable from `adaptyv.models`):
-  - Enums: `ExperimentStatus`, `ResultsStatus`, `ExperimentType` (str enums).
-  - Models: `KineticInterval`, `AffinityReplicate`, `AffinityResult`, `ResultSummary`,
-    `ResultInfo`, `ExpInfo`, `SequenceInfo`, `SequenceListItem`, `SequenceAddRequest`,
-    `TargetInfo`, `ErrorResponse`, `WhoAmIResponse`.
-- Field definitions mirror the Foundry OpenAPI spec
-  (`https://foundry-api-public.adaptyvbio.com/api/v1/openapi.json`).
+**Interfaces:** Produces from `adaptyv.models`:
+- Enums: `ExperimentStatus`, `ResultsStatus`, `ExperimentType`, `Method`, `SequenceType`.
+- `Page[T]` generic (`items,total,count,offset`).
+- Result cluster: `KineticInterval`, `AffinityReplicate`, `AffinityResult`, `ThermostabilityResult`,
+  discriminated `ResultSummary` (on `result_type`), `ResultInfo`.
+- Experiment: `TargetReference`, `ExperimentSpecInfo`, `ExpInfo` (detail), `ExperimentListItem` (list).
+- Sequence: `SequenceEntry`, `SequenceExperimentRef`, `SequenceInfo` (detail), `SequenceListItem` (list),
+  `SequenceAddRequest`, `SequenceAddResponse`.
+- Target: `TargetInfo`.
+- Create/estimate: `ExperimentSpec`, `CreateExpRequest`, `CreateExpResponse`,
+  `CostEstimateRequest`, `CostEstimateResponse`.
+- `ErrorResponse` (`error`, `request_id` only), `WhoAmIResponse`.
 
-- [ ] **Step 1: Write the failing test**
-
-`tests/test_models.py`:
+- [ ] **Step 1: Failing test** — `tests/test_models.py`:
 ```python
 from adaptyv.models import (
-    AffinityResult,
-    ExperimentStatus,
-    ExpInfo,
-    KineticInterval,
-    ResultInfo,
+    AffinityResult, ExperimentStatus, ExpInfo, ExperimentListItem,
+    KineticInterval, Page, ResultInfo, SequenceInfo,
 )
 
+def test_status_enum_matches_real_spec():
+    assert ExperimentStatus.DONE.value == "done"
+    assert {s.value for s in ExperimentStatus} == {
+        "draft", "waiting_for_confirmation", "canceled", "waiting_for_materials",
+        "in_production", "quote_sent", "in_queue", "data_analysis", "in_review", "done"}
 
-def test_experiment_status_enum_values():
-    assert ExperimentStatus.COMPLETE.value == "complete"
-    assert ExperimentStatus("draft") is ExperimentStatus.DRAFT
-    assert {s.value for s in ExperimentStatus} >= {
-        "draft", "complete", "cancelled", "rejected", "in_production",
-        "in_analysis", "waiting_for_confirmation", "waiting_for_materials",
-    }
+def test_kinetic_interval_bounds_nullable():
+    ki = KineticInterval.model_validate({"value": 1.2e-9})
+    assert ki.value == 1.2e-9 and ki.ci_low is None and ki.ci_high is None
 
-
-def test_kinetic_interval_parses():
-    ki = KineticInterval.model_validate({"value": 1.2e-9, "lower": 1.0e-9, "upper": 1.5e-9})
-    assert ki.value == 1.2e-9 and ki.lower < ki.upper
-
-
-def test_affinity_result_optional_kinetics_default_none():
+def test_affinity_result_sequence_is_object_and_performance_is_mapping():
     ar = AffinityResult.model_validate({
-        "sequence": "MK...",
-        "kd_units": "M",
-        "binding_strength": "strong",
-        "positive_control": False,
-        "performance": "pass",
-        "replicates": [],
-    })
-    assert ar.kd_mean is None
-    assert ar.positive_control is False
-    assert ar.replicates == []
+        "sequence": {"aa_string": "MKAA"}, "kd_units": "M", "binding_strength": "strong",
+        "positive_control": False, "performance": {"verdict": "pass"}, "replicates": []})
+    assert ar.sequence.aa_string == "MKAA"
+    assert ar.performance == {"verdict": "pass"} and ar.kd_mean is None
 
-
-def test_expinfo_requires_core_fields():
-    exp = ExpInfo.model_validate({
-        "id": "11111111-1111-1111-1111-111111111111",
-        "code": "EXP-001",
-        "status": "complete",
-        "results_status": "all",
-        "created_at": "2026-07-01T10:00:00Z",
-        "experiment_url": "https://devs.adaptyvbio.com/experiments/EXP-001",
-    })
-    assert exp.status is ExperimentStatus.COMPLETE
-    assert exp.name is None
-
-
-def test_resultinfo_nested_summary():
+def test_result_summary_discriminates_on_result_type():
     ri = ResultInfo.model_validate({
-        "id": "22222222-2222-2222-2222-222222222222",
-        "title": "Affinity results",
-        "experiment_id": "11111111-1111-1111-1111-111111111111",
-        "result_type": "affinity",
-        "created_at": "2026-07-20T10:00:00Z",
-        "summary": [{
-            "sequence": "MK...",
-            "sequence_id": "33333333-3333-3333-3333-333333333333",
-            "readout": "kd",
-            "value": "1.2e-9",
-            "value_units": "M",
-        }],
-        "metadata": {},
-    })
-    assert ri.summary[0].readout == "kd"
-    assert ri.data_package_url is None
+        "id": "22222222-2222-2222-2222-222222222222", "title": "Affinity",
+        "experiment_id": "11111111-1111-1111-1111-111111111111", "result_type": "affinity",
+        "created_at": "2026-07-20T10:00:00Z", "metadata": {},
+        "summary": [{"result_type": "affinity", "sequence": {"aa_string": "MKAA"},
+                     "kd_units": "M", "binding_strength": "strong", "positive_control": True,
+                     "performance": {"verdict": "pass"}, "replicates": [], "kd_mean": 2.0e-9}]})
+    s = ri.summary[0]
+    assert s.result_type == "affinity" and s.positive_control is True and s.kd_mean == 2.0e-9
+
+def test_expinfo_requires_experiment_spec_but_listitem_does_not():
+    common = dict(id="11111111-1111-1111-1111-111111111111", code="EXP-1001",
+                  status="done", results_status="all", created_at="2026-07-01T10:00:00Z",
+                  experiment_url="https://devs.adaptyvbio.com/e/EXP-1001")
+    li = ExperimentListItem.model_validate(common)          # no experiment_spec -> ok
+    assert li.status is ExperimentStatus.DONE
+    exp = ExpInfo.model_validate({**common, "experiment_spec": {"experiment_type": "affinity"}})
+    assert exp.experiment_spec.experiment_type.value == "affinity"
+
+def test_page_generic():
+    p = Page[ExperimentListItem].model_validate(
+        {"items": [], "total": 0, "count": 0, "offset": 0})
+    assert p.total == 0 and p.items == []
+
+def test_sequence_detail_nullable_aa_and_nested_experiment():
+    s = SequenceInfo.model_validate({
+        "id": "33333333-3333-3333-3333-333333333333", "length": 120,
+        "is_control": False, "created_at": "2026-07-01T10:00:00Z",
+        "experiment": {"experiment_id": "11111111-1111-1111-1111-111111111111",
+                       "experiment_code": "EXP-1001"}})
+    assert s.aa_string is None and s.experiment.experiment_code == "EXP-1001"
 ```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `python -m pytest tests/test_models.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'adaptyv.models'`.
-
-- [ ] **Step 3: Write the models**
-
-`adaptyv/models.py`:
+- [ ] **Step 2: Run** → FAIL (`ModuleNotFoundError: adaptyv.models`).
+- [ ] **Step 3: `adaptyv/models.py`:**
 ```python
 from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any, Generic, Literal, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+T = TypeVar("T")
 
-class _Model(BaseModel):
-    # Tolerate unknown fields from the API without crashing (forward-compat).
+
+class _R(BaseModel):
+    """Base for response models: tolerate unknown/added fields."""
     model_config = ConfigDict(extra="ignore")
+
+
+class _Req(BaseModel):
+    """Base for request models: strict."""
+    model_config = ConfigDict(extra="forbid")
 
 
 class ExperimentStatus(str, Enum):
     DRAFT = "draft"
     WAITING_FOR_CONFIRMATION = "waiting_for_confirmation"
+    CANCELED = "canceled"
     WAITING_FOR_MATERIALS = "waiting_for_materials"
     IN_PRODUCTION = "in_production"
-    IN_ANALYSIS = "in_analysis"
-    COMPLETE = "complete"
-    CANCELLED = "cancelled"
-    REJECTED = "rejected"
+    QUOTE_SENT = "quote_sent"
+    IN_QUEUE = "in_queue"
+    DATA_ANALYSIS = "data_analysis"
+    IN_REVIEW = "in_review"
+    DONE = "done"
 
 
 class ResultsStatus(str, Enum):
@@ -261,13 +228,33 @@ class ExperimentType(str, Enum):
     ENZYME_ACTIVITY = "enzyme_activity"
 
 
-class KineticInterval(_Model):
+class Method(str, Enum):
+    BLI = "bli"
+    SPR = "spr"
+
+
+class SequenceType(str, Enum):
+    SCFV = "ScFv"
+    FAB = "FAB"
+    SINGLE_CHAIN = "SingleChain"
+    IGG = "IgG"
+
+
+class Page(_R, Generic[T]):
+    items: list[T]
+    total: int
+    count: int
+    offset: int
+
+
+# ---- result cluster ----
+class KineticInterval(_R):
     value: float
-    lower: float
-    upper: float
+    ci_low: float | None = None
+    ci_high: float | None = None
 
 
-class AffinityReplicate(_Model):
+class AffinityReplicate(_R):
     replicate: int
     binding: str | None = None
     binding_strength: str | None = None
@@ -286,17 +273,34 @@ class AffinityReplicate(_Model):
     rmse_max_signal_pct: float | None = None
 
 
-class AffinityResult(_Model):
-    sequence: str
+class SequenceEntry(_R):
+    aa_string: str
+    control: bool | None = None
+    metadata: dict[str, Any] | None = None
+    name: str | None = None
+
+
+class TargetReference(_R):
+    name: str
+    sequence: str | None = None
+    supplier_url: str | None = None
+    target_catalog_id: str | None = None
+
+
+class AffinityResult(_R):
+    sequence: SequenceEntry
     kd_units: str
     binding_strength: str
     positive_control: bool
-    performance: str
+    performance: dict[str, Any]
     replicates: list[AffinityReplicate] = Field(default_factory=list)
     binding: str | None = None
     binding_model: list[str] | None = None
     expression: str | None = None
     fit_quality: str | None = None
+    method: list[str] | None = None
+    place: int | None = None
+    target: TargetReference | None = None
     kd_mean: float | None = None
     kd_log_std: float | None = None
     kd_app: KineticInterval | None = None
@@ -310,17 +314,32 @@ class AffinityResult(_Model):
     concentration_display: str | None = None
 
 
-class ResultSummary(_Model):
-    sequence: str
+class ThermostabilityResult(_R):
     sequence_id: str
-    readout: str
-    value: str | float | None
-    value_units: str | None
-    value_range: dict[str, Any] | None = None
-    confidence: str | None = None
+    inflection_pts_for_ratio: list[float]
+    onset_pts_for_ratio: list[float]
+    bli_result_id: str | None = None
+    initial_330nm: float | None = None
+    sequence: str | None = None
+    sequence_name: str | None = None
+    tm: float | None = None
 
 
-class ResultInfo(_Model):
+class AffinityResultSummary(AffinityResult):
+    result_type: Literal["affinity"]
+
+
+class ThermostabilityResultSummary(ThermostabilityResult):
+    result_type: Literal["thermostability"]
+
+
+ResultSummary = Annotated[
+    Union[AffinityResultSummary, ThermostabilityResultSummary],
+    Field(discriminator="result_type"),
+]
+
+
+class ResultInfo(_R):
     id: str
     title: str
     experiment_id: str
@@ -331,36 +350,60 @@ class ResultInfo(_Model):
     data_package_url: str | None = None
 
 
-class ExpInfo(_Model):
+# ---- experiments ----
+class ExperimentSpecInfo(_R):
+    experiment_type: ExperimentType
+    target: TargetReference | None = None
+    # other spec fields (method, replicates, sequences...) tolerated via extra="ignore"
+
+
+class ExpInfo(_R):
     id: str
     code: str
     status: ExperimentStatus
     results_status: ResultsStatus
     created_at: datetime
     experiment_url: str
+    experiment_spec: ExperimentSpecInfo
     name: str | None = None
-    experiment_type: ExperimentType | None = None
+    costs: dict[str, Any] | None = None
+    stripe_quote_id: str | None = None
     stripe_quote_url: str | None = None
     stripe_invoice_url: str | None = None
-    target: dict[str, Any] | None = None
-    sequences: list[Any] | None = None
-    parameters: dict[str, Any] | None = None
-    webhook_url: str | None = None
 
 
-class SequenceInfo(_Model):
+class ExperimentListItem(_R):
     id: str
-    aa_string: str
-    length: int
+    code: str
+    status: ExperimentStatus
+    results_status: ResultsStatus
+    created_at: datetime
+    experiment_url: str
+    experiment_type: ExperimentType | None = None
+    name: str | None = None
+    stripe_quote_url: str | None = None
+    stripe_invoice_url: str | None = None
+
+
+# ---- sequences ----
+class SequenceExperimentRef(_R):
     experiment_id: str
     experiment_code: str
+    experiment_status: str | None = None
+
+
+class SequenceInfo(_R):
+    id: str
+    length: int
     is_control: bool
     created_at: datetime
+    experiment: SequenceExperimentRef
+    aa_string: str | None = None
     name: str | None = None
     metadata: dict[str, Any] | None = None
 
 
-class SequenceListItem(_Model):
+class SequenceListItem(_R):
     id: str
     length: int
     experiment_id: str
@@ -371,12 +414,20 @@ class SequenceListItem(_Model):
     aa_preview: str | None = None
 
 
-class SequenceAddRequest(_Model):
+class SequenceAddRequest(_Req):
     experiment_code: str
-    sequences: dict[str, str]
+    sequences: list[SequenceEntry]
 
 
-class TargetInfo(_Model):
+class SequenceAddResponse(_R):
+    experiment_id: str
+    experiment_code: str
+    added_count: int
+    sequence_ids: list[str]
+
+
+# ---- targets ----
+class TargetInfo(_R):
     id: str
     name: str
     vendor_name: str
@@ -387,120 +438,150 @@ class TargetInfo(_Model):
     details: dict[str, Any] | None = None
 
 
-class ErrorResponse(_Model):
+# ---- create / estimate ----
+class ExperimentSpec(_Req):
+    experiment_type: ExperimentType
+    sequences: list[SequenceEntry] = Field(default_factory=list)
+    target_id: str | None = None
+    method: Method | None = None
+    antigen_concentrations: list[float] | None = None
+    parameters: dict[str, Any] | None = None
+
+
+class CreateExpRequest(_Req):
+    name: str
+    experiment_spec: ExperimentSpec
+    skip_draft: bool | None = None
+    auto_accept_quote: bool | None = None
+    webhook_url: str | None = None
+
+
+class CreateExpResponse(_R):
+    experiment_id: str
+    error: str | None = None
+    stripe_invoice_id: str | None = None
+    stripe_hosted_invoice_url: str | None = None
+
+
+class CostEstimateRequest(_Req):
+    experiment_spec: ExperimentSpec
+
+
+class CostEstimateResponse(_R):
+    breakdown: Any | None = None
+    incomplete: Any | None = None
+    warnings: list[str] | None = None
+
+
+class ErrorResponse(_R):
     error: str
-    message: str
-    status_code: int
     request_id: str
 
 
-class WhoAmIResponse(_Model):
+class WhoAmIResponse(_R):
     user_id: str
     organizations: list[dict[str, Any]]
     capabilities: list[str]
     expires_at: datetime | None = None
 ```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `python -m pytest tests/test_models.py -q`
-Expected: PASS (5 passed).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add adaptyv/models.py tests/test_models.py
-git commit -m "feat: add pydantic models mirroring Foundry OpenAPI schemas"
-```
+- [ ] **Step 4: Run** `python3 -m pytest tests/test_models.py -q` → PASS.
+- [ ] **Step 5: Commit** `git add adaptyv/models.py tests/test_models.py && git commit -m "feat: schema-faithful pydantic models (enums, discriminated results, pagination)"`.
 
 ---
 
-### Task 3: Transport protocol, errors, MockTransport + fixtures, contract test
+### Task 3: Transport, errors, pagination, MockTransport + fixtures, contract test
 
-**Files:**
-- Create: `adaptyv/errors.py`
-- Create: `adaptyv/transport.py`
-- Create: `adaptyv/mocks/__init__.py`
-- Create: `adaptyv/mocks/fixtures/experiments.json`
-- Create: `adaptyv/mocks/fixtures/results.json`
-- Test: `tests/test_transport.py`
-- Test: `tests/test_fixtures_contract.py`
+**Files:** Create `adaptyv/errors.py`, `adaptyv/transport.py`, `adaptyv/mocks/__init__.py`,
+`adaptyv/mocks/fixtures/{experiments_list.json,experiment_detail.json,results_list.json,targets_list.json,sequences_list.json}`;
+Test `tests/test_transport.py`, `tests/test_fixtures_contract.py`.
 
 **Interfaces:**
-- Consumes: `adaptyv.models` (Task 2).
-- Produces:
-  - `adaptyv.errors`: `AdaptyvError`, `AuthError`, `NotFoundError`, `RateLimitError`,
-    `ValidationError`, `TransportError` (all subclasses of `AdaptyvError`).
-  - `adaptyv.transport.Transport` protocol with
-    `request(method: str, path: str, *, params: dict | None = None, json: dict | None = None) -> Any`
-    (returns already-parsed JSON, raises `AdaptyvError` subclasses on HTTP errors).
-  - `adaptyv.transport.MockTransport(fixtures_dir: str | None = None)` implementing `Transport`
-    by routing `(method, path)` to fixture data.
+- `adaptyv.errors`: `AdaptyvError`, `AuthError`, `NotFoundError`, `RateLimitError`,
+  `ValidationError`, `TransportError`, `error_for_status(status, message, request_id)`.
+- `adaptyv.transport.Transport` protocol:
+  `request(method, path, *, params=None, json=None) -> Any` (parsed JSON; raises `AdaptyvError`).
+- `adaptyv.transport.MockTransport()` — returns pagination envelopes for list paths and bare
+  objects for detail paths; raises `NotFoundError` for unknown ids.
 
-- [ ] **Step 1: Write the failing tests**
-
-`tests/test_transport.py`:
+- [ ] **Step 1: Failing tests** — `tests/test_transport.py`:
 ```python
 import pytest
-
 from adaptyv.errors import NotFoundError
 from adaptyv.transport import MockTransport
 
+def test_list_returns_pagination_envelope():
+    env = MockTransport().request("GET", "/api/v1/experiments")
+    assert set(env) >= {"items", "total", "count", "offset"}
+    assert isinstance(env["items"], list) and env["items"]
 
-def test_mock_lists_experiments():
+def test_detail_returns_bare_object():
     t = MockTransport()
-    data = t.request("GET", "/api/v1/experiments")
-    assert isinstance(data, list) and len(data) >= 1
-    assert all("code" in e for e in data)
+    exp_id = t.request("GET", "/api/v1/experiments")["items"][0]["id"]
+    exp = t.request("GET", f"/api/v1/experiments/{exp_id}")
+    assert exp["id"] == exp_id and "experiment_spec" in exp
 
-
-def test_mock_gets_experiment_results():
+def test_results_for_experiment_filtered():
     t = MockTransport()
-    exps = t.request("GET", "/api/v1/experiments")
-    complete = next(e for e in exps if e["status"] == "complete")
-    results = t.request("GET", f"/api/v1/experiments/{complete['id']}/results")
-    assert isinstance(results, list) and results
+    env = t.request("GET", "/api/v1/results")
+    assert env["items"] and env["items"][0]["summary"][0]["result_type"] == "affinity"
 
-
-def test_mock_unknown_path_raises_not_found():
-    t = MockTransport()
+def test_unknown_detail_raises():
     with pytest.raises(NotFoundError):
-        t.request("GET", "/api/v1/experiments/does-not-exist/results")
+        MockTransport().request("GET", "/api/v1/experiments/00000000-0000-0000-0000-0000000000ff")
 ```
-
-`tests/test_fixtures_contract.py`:
+`tests/test_fixtures_contract.py` — validate every fixture against the **pinned OpenAPI schema**:
 ```python
-"""Contract test: every fixture must validate against the real pydantic models.
-This is what stops mock data from silently drifting from the API schema."""
-from adaptyv.mocks import load_fixture
-from adaptyv.models import ExpInfo, ResultInfo
+"""Contract test: fixtures must validate against the authoritative OpenAPI component
+schemas (not just our pydantic models), so mock data cannot drift from the real API."""
+import json
+from pathlib import Path
+
+import pytest
+from jsonschema import Draft202012Validator
+
+SPEC = json.loads((Path("tests/data/openapi.json")).read_text())
+SCHEMAS = SPEC["components"]["schemas"]
+FIX = Path("adaptyv/mocks/fixtures")
 
 
-def test_experiment_fixtures_validate():
-    for raw in load_fixture("experiments.json"):
-        ExpInfo.model_validate(raw)
+def _validator(component: str) -> Draft202012Validator:
+    # Resolve $ref against the spec's components using a 2020-12 registry.
+    from referencing import Registry, Resource
+    from referencing.jsonschema import DRAFT202012
+    resources = [(f"#/components/schemas/{n}", Resource(contents=s, specification=DRAFT202012))
+                 for n, s in SCHEMAS.items()]
+    registry = Registry().with_resources(
+        [(uri, res) for uri, res in resources])
+    return Draft202012Validator({"$ref": f"#/components/schemas/{component}"},
+                                registry=registry)
 
 
-def test_result_fixtures_validate():
-    for raw in load_fixture("results.json"):
-        ResultInfo.model_validate(raw)
+@pytest.mark.parametrize("fixture,component,is_list", [
+    ("experiments_list.json", None, True),
+    ("experiment_detail.json", "ExpInfo", False),
+    ("results_list.json", None, True),
+    ("targets_list.json", None, True),
+    ("sequences_list.json", None, True),
+])
+def test_fixture_validates(fixture, component, is_list):
+    data = json.loads((FIX / fixture).read_text())
+    if is_list:
+        assert set(data) >= {"items", "total", "count", "offset"}
+    else:
+        Draft202012Validator(SCHEMAS[component]).is_valid  # smoke
+        _validator(component).validate(data)
 ```
+> Note: list-endpoint item schemas are inline (not `$ref`), so the list test asserts the
+> envelope shape and defers per-item validation to the detail fixtures + pydantic round-trip
+> in `test_models`. This keeps the contract test authoritative without duplicating inline schemas.
 
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `python -m pytest tests/test_transport.py tests/test_fixtures_contract.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'adaptyv.transport'`.
-
-- [ ] **Step 3: Write errors**
-
-`adaptyv/errors.py`:
+- [ ] **Step 2: Run** → FAIL (`ModuleNotFoundError: adaptyv.transport`).
+- [ ] **Step 3: `adaptyv/errors.py`:**
 ```python
 from __future__ import annotations
 
 
 class AdaptyvError(Exception):
-    """Base class for all SDK errors."""
-
     def __init__(self, message: str, *, status_code: int | None = None,
                  request_id: str | None = None):
         super().__init__(message)
@@ -509,54 +590,34 @@ class AdaptyvError(Exception):
         self.request_id = request_id
 
 
-class AuthError(AdaptyvError):
-    """401/403 — missing or insufficient credentials."""
-
-
-class NotFoundError(AdaptyvError):
-    """404 — resource does not exist."""
-
-
-class RateLimitError(AdaptyvError):
-    """429 — too many requests."""
-
-
-class ValidationError(AdaptyvError):
-    """400/422 — request rejected by the API."""
-
-
-class TransportError(AdaptyvError):
-    """Network/5xx or otherwise unexpected transport failure."""
+class AuthError(AdaptyvError): ...
+class NotFoundError(AdaptyvError): ...
+class RateLimitError(AdaptyvError): ...
+class ValidationError(AdaptyvError): ...
+class TransportError(AdaptyvError): ...
 
 
 def error_for_status(status_code: int, message: str, request_id: str | None = None) -> AdaptyvError:
-    mapping = {401: AuthError, 403: AuthError, 404: NotFoundError,
-               429: RateLimitError, 400: ValidationError, 422: ValidationError}
-    cls = mapping.get(status_code, TransportError if status_code >= 500 else AdaptyvError)
+    m = {401: AuthError, 403: AuthError, 404: NotFoundError, 429: RateLimitError,
+         400: ValidationError, 422: ValidationError}
+    cls = m.get(status_code, TransportError if status_code >= 500 else AdaptyvError)
     return cls(message, status_code=status_code, request_id=request_id)
 ```
-
-- [ ] **Step 4: Write the fixture loader + MockTransport**
-
-`adaptyv/mocks/__init__.py`:
+- [ ] **Step 4: `adaptyv/mocks/__init__.py`:**
 ```python
 from __future__ import annotations
-
-import json
+import copy, json
 from pathlib import Path
 from typing import Any
 
-_FIXTURES = Path(__file__).parent / "fixtures"
-
+_FIX = Path(__file__).parent / "fixtures"
 
 def load_fixture(name: str) -> Any:
-    return json.loads((_FIXTURES / name).read_text())
+    return copy.deepcopy(json.loads((_FIX / name).read_text()))  # defensive copy
 ```
-
-`adaptyv/transport.py`:
+- [ ] **Step 5: `adaptyv/transport.py`:**
 ```python
 from __future__ import annotations
-
 import re
 from typing import Any, Protocol
 
@@ -569,197 +630,180 @@ class Transport(Protocol):
                 json: dict | None = None) -> Any: ...
 
 
+def _page(items: list[dict], offset: int = 0) -> dict:
+    return {"items": items, "total": len(items), "count": len(items), "offset": offset}
+
+
 class MockTransport:
-    """Serves fixture data with no network or API key. This is demo mode."""
+    """Serves fixture data with the same shapes as the live API. This is demo mode."""
 
-    def __init__(self, fixtures_dir: str | None = None) -> None:
-        self._experiments: list[dict] = load_fixture("experiments.json")
-        self._results: list[dict] = load_fixture("results.json")
+    def __init__(self) -> None:
+        self._experiments = load_fixture("experiments_list.json")["items"]
+        self._experiment_detail = load_fixture("experiment_detail.json")
+        self._results = load_fixture("results_list.json")["items"]
+        self._targets = load_fixture("targets_list.json")["items"]
+        self._sequences = load_fixture("sequences_list.json")["items"]
 
-    def request(self, method: str, path: str, *, params: dict | None = None,
-                json: dict | None = None) -> Any:
+    def request(self, method: str, path: str, *, params=None, json=None) -> Any:
         if method == "GET" and path == "/api/v1/experiments":
-            return self._experiments
+            return _page(self._experiments)
+        if method == "GET" and path == "/api/v1/results":
+            return _page(self._results)
+        if method == "GET" and path == "/api/v1/targets":
+            return _page(self._targets)
+        if method == "GET" and path == "/api/v1/sequences":
+            return _page(self._sequences)
         m = re.fullmatch(r"/api/v1/experiments/([^/]+)", path)
         if method == "GET" and m:
-            return self._get_experiment(m.group(1))
+            return self._detail(self._experiments, m.group(1),
+                                full=self._experiment_detail, kind="experiment")
         m = re.fullmatch(r"/api/v1/experiments/([^/]+)/results", path)
         if method == "GET" and m:
-            return self._results_for(m.group(1))
-        raise NotFoundError(f"MockTransport has no route for {method} {path}",
-                            status_code=404)
+            self._detail(self._experiments, m.group(1), kind="experiment")  # 404 if unknown
+            return _page([r for r in self._results if r["experiment_id"] == m.group(1)])
+        for coll, kind in ((self._targets, "target"), (self._results, "result"),
+                           (self._sequences, "sequence")):
+            m = re.fullmatch(rf"/api/v1/{kind}s/([^/]+)", path)
+            if method == "GET" and m:
+                return self._detail(coll, m.group(1), kind=kind)
+        raise NotFoundError(f"MockTransport has no route for {method} {path}", status_code=404)
 
-    def _get_experiment(self, exp_id: str) -> dict:
-        for e in self._experiments:
-            if e["id"] == exp_id or e["code"] == exp_id:
-                return e
-        raise NotFoundError(f"experiment {exp_id} not found", status_code=404)
-
-    def _results_for(self, exp_id: str) -> list[dict]:
-        exp = self._get_experiment(exp_id)  # raises NotFoundError if unknown
-        return [r for r in self._results if r["experiment_id"] == exp["id"]]
+    def _detail(self, items, item_id, *, full=None, kind="item"):
+        for it in items:
+            if it["id"] == item_id:
+                return full if (full and full.get("id") == item_id) else it
+        raise NotFoundError(f"{kind} {item_id} not found", status_code=404)
 ```
-
-- [ ] **Step 5: Write the fixtures**
-
-`adaptyv/mocks/fixtures/experiments.json` (healthy complete + a running draft; extend in Phase 3 with anomalous ones):
+- [ ] **Step 6: Fixtures** (envelopes; `experiment_detail.json` matches its list item's `id`).
+  `experiments_list.json`:
 ```json
-[
-  {
-    "id": "11111111-1111-1111-1111-111111111111",
-    "code": "EXP-1001",
-    "status": "complete",
-    "results_status": "all",
-    "created_at": "2026-07-01T10:00:00Z",
-    "experiment_url": "https://devs.adaptyvbio.com/experiments/EXP-1001",
-    "name": "Anti-IL6 binder panel",
-    "experiment_type": "affinity"
-  },
-  {
-    "id": "22222222-2222-2222-2222-222222222222",
-    "code": "EXP-1002",
-    "status": "in_production",
-    "results_status": "none",
-    "created_at": "2026-07-15T09:00:00Z",
-    "experiment_url": "https://devs.adaptyvbio.com/experiments/EXP-1002",
-    "name": "PD-L1 affinity screen",
-    "experiment_type": "affinity"
-  }
-]
+{"items": [
+  {"id": "11111111-1111-1111-1111-111111111111", "code": "EXP-1001", "status": "done",
+   "results_status": "all", "created_at": "2026-07-01T10:00:00Z",
+   "experiment_url": "https://devs.adaptyvbio.com/e/EXP-1001", "experiment_type": "affinity",
+   "name": "Anti-IL6 binder panel"},
+  {"id": "22222222-2222-2222-2222-222222222222", "code": "EXP-1002", "status": "in_production",
+   "results_status": "none", "created_at": "2026-07-15T09:00:00Z",
+   "experiment_url": "https://devs.adaptyvbio.com/e/EXP-1002", "experiment_type": "affinity",
+   "name": "PD-L1 affinity screen"}
+], "total": 2, "count": 2, "offset": 0}
 ```
-
-`adaptyv/mocks/fixtures/results.json`:
+  `experiment_detail.json`:
 ```json
-[
-  {
-    "id": "aaaaaaaa-0000-0000-0000-000000000001",
-    "title": "Affinity results — Anti-IL6 binder panel",
-    "experiment_id": "11111111-1111-1111-1111-111111111111",
-    "result_type": "affinity",
-    "created_at": "2026-07-20T10:00:00Z",
-    "metadata": {},
-    "data_package_url": "https://devs.adaptyvbio.com/data/EXP-1001.zip",
-    "summary": [
-      {"sequence": "MKAA...", "sequence_id": "33333333-0000-0000-0000-000000000001",
-       "readout": "kd", "value": 1.2e-9, "value_units": "M", "confidence": "high"},
-      {"sequence": "MKBB...", "sequence_id": "33333333-0000-0000-0000-000000000002",
-       "readout": "kd", "value": 4.5e-8, "value_units": "M", "confidence": "medium"},
-      {"sequence": "CTRLPOS...", "sequence_id": "33333333-0000-0000-0000-0000000000ff",
-       "readout": "kd", "value": 2.0e-9, "value_units": "M", "confidence": "high"}
-    ]
-  }
-]
+{"id": "11111111-1111-1111-1111-111111111111", "code": "EXP-1001", "status": "done",
+ "results_status": "all", "created_at": "2026-07-01T10:00:00Z",
+ "experiment_url": "https://devs.adaptyvbio.com/e/EXP-1001", "name": "Anti-IL6 binder panel",
+ "experiment_spec": {"experiment_type": "affinity",
+   "target": {"name": "IL-6", "target_catalog_id": "IL6-001"}}}
 ```
-
-- [ ] **Step 6: Run tests to verify they pass**
-
-Run: `python -m pytest tests/test_transport.py tests/test_fixtures_contract.py -q`
-Expected: PASS (5 passed).
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add adaptyv/errors.py adaptyv/transport.py adaptyv/mocks/ tests/test_transport.py tests/test_fixtures_contract.py
-git commit -m "feat: add transport protocol, errors, MockTransport + fixtures with contract test"
+  `results_list.json`:
+```json
+{"items": [
+  {"id": "aaaaaaaa-0000-0000-0000-000000000001", "title": "Affinity results — Anti-IL6 binder panel",
+   "experiment_id": "11111111-1111-1111-1111-111111111111", "result_type": "affinity",
+   "created_at": "2026-07-20T10:00:00Z", "metadata": {},
+   "data_package_url": "https://devs.adaptyvbio.com/data/EXP-1001.zip",
+   "summary": [
+     {"result_type": "affinity", "sequence": {"aa_string": "MKAA", "name": "binder-1"},
+      "kd_units": "M", "binding_strength": "strong", "positive_control": false,
+      "performance": {"verdict": "pass"}, "kd_mean": 1.2e-9,
+      "replicates": [{"replicate": 1, "kd": 1.1e-9, "expression": "high"},
+                     {"replicate": 2, "kd": 1.3e-9, "expression": "high"}]},
+     {"result_type": "affinity", "sequence": {"aa_string": "CTRLP", "name": "pos-control"},
+      "kd_units": "M", "binding_strength": "strong", "positive_control": true,
+      "performance": {"verdict": "pass"}, "kd_mean": 2.0e-9, "replicates": [{"replicate": 1, "kd": 2.0e-9}]}
+   ]}
+], "total": 1, "count": 1, "offset": 0}
 ```
+  `targets_list.json`:
+```json
+{"items": [
+  {"id": "44444444-0000-0000-0000-000000000001", "name": "IL-6", "vendor_name": "Acme Bio",
+   "catalog_number": "IL6-001", "url": "https://devs.adaptyvbio.com/t/IL6-001", "uniprot_id": "P05231"},
+  {"id": "44444444-0000-0000-0000-000000000002", "name": "PD-L1", "vendor_name": "Acme Bio",
+   "catalog_number": "PDL1-002", "url": "https://devs.adaptyvbio.com/t/PDL1-002", "uniprot_id": "Q9NZQ7"}
+], "total": 2, "count": 2, "offset": 0}
+```
+  `sequences_list.json`:
+```json
+{"items": [
+  {"id": "33333333-0000-0000-0000-000000000001", "length": 120, "experiment_id": "11111111-1111-1111-1111-111111111111",
+   "experiment_code": "EXP-1001", "is_control": false, "created_at": "2026-07-01T10:00:00Z",
+   "name": "binder-1", "aa_preview": "MKAA..."}
+], "total": 1, "count": 1, "offset": 0}
+```
+- [ ] **Step 7: Run** `python3 -m pytest tests/test_transport.py tests/test_fixtures_contract.py -q` → PASS.
+- [ ] **Step 8: Commit** `git add adaptyv/errors.py adaptyv/transport.py adaptyv/mocks tests/test_transport.py tests/test_fixtures_contract.py && git commit -m "feat: transport, errors, pagination-aware MockTransport + OpenAPI-schema contract test"`.
 
 ---
 
-### Task 4: AdaptyvClient + experiments resource
+### Task 4: AdaptyvClient + experiments resource (paginated reads)
 
-**Files:**
-- Create: `adaptyv/resources/__init__.py`
-- Create: `adaptyv/resources/experiments.py`
-- Create: `adaptyv/client.py`
-- Modify: `adaptyv/__init__.py` (export `AdaptyvClient`)
-- Test: `tests/test_experiments_resource.py`
+**Files:** Create `adaptyv/resources/__init__.py`, `adaptyv/resources/experiments.py`,
+`adaptyv/client.py`; Modify `adaptyv/__init__.py`; Test `tests/test_experiments_resource.py`.
 
 **Interfaces:**
-- Consumes: `Transport`/`MockTransport` (Task 3), models (Task 2).
-- Produces:
-  - `adaptyv.client.AdaptyvClient(api_key: str | None = None, mock: bool = False, base_url: str = "https://devs.adaptyvbio.com", transport: Transport | None = None)`.
-  - `client.experiments` → `ExperimentsResource` with:
-    - `list() -> list[ExpInfo]`
-    - `get(experiment_id: str) -> ExpInfo`
-    - `results(experiment_id: str) -> list[ResultInfo]`
-  - `AdaptyvClient` exported from `adaptyv`.
+- `AdaptyvClient(api_key=None, *, mock=False, base_url="https://devs.adaptyvbio.com", transport=None)`
+  with `_request(method, path, *, params=None, json=None)` and `_paged(path, model, params) -> list[model]`.
+- `client.experiments.list(*, limit=None, offset=None, search=None, filter=None, sort=None) -> list[ExperimentListItem]`
+- `client.experiments.get(experiment_id: str) -> ExpInfo`  (UUID only)
+- `client.experiments.results(experiment_id: str) -> list[ResultInfo]`
 
-- [ ] **Step 1: Write the failing test**
-
-`tests/test_experiments_resource.py`:
+- [ ] **Step 1: Failing test** — `tests/test_experiments_resource.py`:
 ```python
 from adaptyv import AdaptyvClient
-from adaptyv.models import ExpInfo, ExperimentStatus, ResultInfo
+from adaptyv.models import ExperimentListItem, ExperimentStatus, ExpInfo, ResultInfo
 
+def test_list_returns_list_items():
+    exps = AdaptyvClient(mock=True).experiments.list()
+    assert all(isinstance(e, ExperimentListItem) for e in exps)
+    assert any(e.status is ExperimentStatus.DONE for e in exps)
 
-def test_list_experiments_returns_typed_models():
-    client = AdaptyvClient(mock=True)
-    exps = client.experiments.list()
-    assert all(isinstance(e, ExpInfo) for e in exps)
-    assert any(e.status is ExperimentStatus.COMPLETE for e in exps)
+def test_get_detail_by_uuid():
+    exp = AdaptyvClient(mock=True).experiments.get("11111111-1111-1111-1111-111111111111")
+    assert isinstance(exp, ExpInfo) and exp.experiment_spec.experiment_type.value == "affinity"
 
-
-def test_get_experiment_by_code():
-    client = AdaptyvClient(mock=True)
-    exp = client.experiments.get("EXP-1001")
-    assert exp.code == "EXP-1001"
-
-
-def test_experiment_results_typed():
-    client = AdaptyvClient(mock=True)
-    exp = client.experiments.get("EXP-1001")
-    results = client.experiments.results(exp.id)
-    assert results and all(isinstance(r, ResultInfo) for r in results)
-    assert results[0].summary[0].readout == "kd"
+def test_results_are_typed_and_discriminated():
+    c = AdaptyvClient(mock=True)
+    results = c.experiments.results("11111111-1111-1111-1111-111111111111")
+    assert results and isinstance(results[0], ResultInfo)
+    assert results[0].summary[0].result_type == "affinity"
 ```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `python -m pytest tests/test_experiments_resource.py -q`
-Expected: FAIL — `ImportError: cannot import name 'AdaptyvClient'`.
-
-- [ ] **Step 3: Write the resource + client**
-
-`adaptyv/resources/__init__.py`: (empty file)
-
-`adaptyv/resources/experiments.py`:
+- [ ] **Step 2: Run** → FAIL (`ImportError: AdaptyvClient`).
+- [ ] **Step 3:** `adaptyv/resources/__init__.py`: empty. `adaptyv/resources/experiments.py`:
 ```python
 from __future__ import annotations
-
 from typing import TYPE_CHECKING
-
-from adaptyv.models import ExpInfo, ResultInfo
-
+from adaptyv.models import ExperimentListItem, ExpInfo, ResultInfo
 if TYPE_CHECKING:
     from adaptyv.client import AdaptyvClient
 
 
 class ExperimentsResource:
     def __init__(self, client: "AdaptyvClient") -> None:
-        self._client = client
+        self._c = client
 
-    def list(self) -> list[ExpInfo]:
-        data = self._client._request("GET", "/api/v1/experiments")
-        return [ExpInfo.model_validate(d) for d in data]
+    def list(self, *, limit=None, offset=None, search=None, filter=None, sort=None):
+        params = {k: v for k, v in dict(limit=limit, offset=offset, search=search,
+                                        filter=filter, sort=sort).items() if v is not None}
+        return self._c._paged("/api/v1/experiments", ExperimentListItem, params)
 
     def get(self, experiment_id: str) -> ExpInfo:
-        data = self._client._request("GET", f"/api/v1/experiments/{experiment_id}")
-        return ExpInfo.model_validate(data)
+        return ExpInfo.model_validate(
+            self._c._request("GET", f"/api/v1/experiments/{experiment_id}"))
 
     def results(self, experiment_id: str) -> list[ResultInfo]:
-        data = self._client._request("GET", f"/api/v1/experiments/{experiment_id}/results")
-        return [ResultInfo.model_validate(d) for d in data]
+        return self._c._paged(f"/api/v1/experiments/{experiment_id}/results", ResultInfo, {})
 ```
-
-`adaptyv/client.py`:
+  `adaptyv/client.py`:
 ```python
 from __future__ import annotations
-
 import os
-from typing import Any
-
-from adaptyv.resources.experiments import ExperimentsResource
+from typing import Any, Type, TypeVar
+from pydantic import BaseModel, TypeAdapter
 from adaptyv.transport import MockTransport, Transport
+
+M = TypeVar("M", bound=BaseModel)
 
 
 class AdaptyvClient:
@@ -772,488 +816,337 @@ class AdaptyvClient:
         elif mock:
             self._transport = MockTransport()
         else:
-            from adaptyv.live_transport import LiveTransport  # deferred (Task 6)
-            key = api_key or os.environ.get("ADAPTYV_API_KEY")
-            self._transport = LiveTransport(base_url=base_url, api_key=key)
+            from adaptyv.live_transport import LiveTransport  # deferred (Task 7)
+            self._transport = LiveTransport(base_url=base_url,
+                                            api_key=api_key or os.environ.get("ADAPTYV_API_KEY"))
+        from adaptyv.resources.experiments import ExperimentsResource
         self.experiments = ExperimentsResource(self)
 
-    def _request(self, method: str, path: str, *, params: dict | None = None,
-                 json: dict | None = None) -> Any:
+    def _request(self, method: str, path: str, *, params=None, json=None) -> Any:
         return self._transport.request(method, path, params=params, json=json)
-```
 
-`adaptyv/__init__.py`:
+    def _paged(self, path: str, model: Type[M], params: dict) -> list[M]:
+        env = self._request("GET", path, params=params)
+        adapter = TypeAdapter(model)
+        return [adapter.validate_python(i) for i in env["items"]]
+```
+  `adaptyv/__init__.py`:
 ```python
 from adaptyv._version import __version__
 from adaptyv.client import AdaptyvClient
-
 __all__ = ["__version__", "AdaptyvClient"]
 ```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `python -m pytest tests/test_experiments_resource.py -q`
-Expected: PASS (3 passed).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add adaptyv/resources/ adaptyv/client.py adaptyv/__init__.py tests/test_experiments_resource.py
-git commit -m "feat: add AdaptyvClient and experiments resource"
-```
+- [ ] **Step 4: Run** → PASS. **Step 5: Commit** `git commit -am "feat: AdaptyvClient + paginated experiments resource"`.
 
 ---
 
-### Task 5: sequences, targets, results resources
+### Task 5: Write methods — experiments.create/submit/cost_estimate
 
-**Files:**
-- Create: `adaptyv/resources/sequences.py`
-- Create: `adaptyv/resources/targets.py`
-- Create: `adaptyv/resources/results.py`
-- Create: `adaptyv/mocks/fixtures/targets.json`
-- Modify: `adaptyv/client.py` (wire the three resources)
-- Modify: `adaptyv/transport.py` (routes for `/sequences`, `/targets`, `/results`)
-- Test: `tests/test_other_resources.py`
+**Files:** Modify `adaptyv/resources/experiments.py`, `adaptyv/transport.py` (mock POST routes);
+Test `tests/test_experiment_writes.py`.
 
 **Interfaces:**
-- Consumes: client + transport + models.
-- Produces:
-  - `client.sequences.list() -> list[SequenceListItem]`, `client.sequences.get(id) -> SequenceInfo`
-  - `client.targets.list() -> list[TargetInfo]`, `client.targets.get(id) -> TargetInfo`
-  - `client.results.list() -> list[ResultInfo]`, `client.results.get(id) -> ResultInfo`
-  - MockTransport routes: `GET /api/v1/targets`, `GET /api/v1/targets/{id}`,
-    `GET /api/v1/results`, `GET /api/v1/results/{id}`, `GET /api/v1/sequences`.
+- `experiments.create(request: CreateExpRequest) -> CreateExpResponse` → `POST /api/v1/experiments`
+- `experiments.submit(experiment_id: str) -> dict` → `POST /api/v1/experiments/{id}/submit`
+- `experiments.cost_estimate(request: CostEstimateRequest) -> CostEstimateResponse` → `POST /api/v1/experiments/cost-estimate`
 
-- [ ] **Step 1: Write the failing test**
-
-`tests/test_other_resources.py`:
+- [ ] **Step 1: Failing test** — `tests/test_experiment_writes.py`:
 ```python
 from adaptyv import AdaptyvClient
-from adaptyv.models import ResultInfo, TargetInfo
+from adaptyv.models import (CreateExpRequest, CreateExpResponse, CostEstimateRequest,
+                            CostEstimateResponse, ExperimentSpec, SequenceEntry)
 
+def _spec():
+    return ExperimentSpec(experiment_type="affinity", target_id="44444444-0000-0000-0000-000000000001",
+                          sequences=[SequenceEntry(aa_string="MKAA", name="binder-1")])
 
-def test_targets_list_and_get():
-    c = AdaptyvClient(mock=True)
-    targets = c.targets.list()
-    assert targets and all(isinstance(t, TargetInfo) for t in targets)
-    one = c.targets.get(targets[0].id)
-    assert one.id == targets[0].id
+def test_create_returns_experiment_id():
+    r = AdaptyvClient(mock=True).experiments.create(
+        CreateExpRequest(name="My run", experiment_spec=_spec()))
+    assert isinstance(r, CreateExpResponse) and r.experiment_id
 
-
-def test_results_list_and_get():
-    c = AdaptyvClient(mock=True)
-    results = c.results.list()
-    assert results and all(isinstance(r, ResultInfo) for r in results)
-    one = c.results.get(results[0].id)
-    assert one.id == results[0].id
+def test_cost_estimate_returns_response():
+    r = AdaptyvClient(mock=True).experiments.cost_estimate(CostEstimateRequest(experiment_spec=_spec()))
+    assert isinstance(r, CostEstimateResponse)
 ```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `python -m pytest tests/test_other_resources.py -q`
-Expected: FAIL — `AttributeError: 'AdaptyvClient' object has no attribute 'targets'`.
-
-- [ ] **Step 3: Add the targets fixture**
-
-`adaptyv/mocks/fixtures/targets.json`:
-```json
-[
-  {"id": "44444444-0000-0000-0000-000000000001", "name": "IL-6",
-   "vendor_name": "Acme Bio", "catalog_number": "IL6-001",
-   "url": "https://devs.adaptyvbio.com/targets/IL6-001", "uniprot_id": "P05231"},
-  {"id": "44444444-0000-0000-0000-000000000002", "name": "PD-L1",
-   "vendor_name": "Acme Bio", "catalog_number": "PDL1-002",
-   "url": "https://devs.adaptyvbio.com/targets/PDL1-002", "uniprot_id": "Q9NZQ7"}
-]
-```
-
-- [ ] **Step 4: Extend MockTransport routes**
-
-In `adaptyv/transport.py`, load targets in `__init__`:
+- [ ] **Step 2: Run** → FAIL (`AttributeError: create`).
+- [ ] **Step 3:** add to `ExperimentsResource`:
 ```python
-        self._targets: list[dict] = load_fixture("targets.json")
-```
-and add these branches to `request` (before the final `raise`):
-```python
-        if method == "GET" and path == "/api/v1/targets":
-            return self._targets
-        m = re.fullmatch(r"/api/v1/targets/([^/]+)", path)
-        if method == "GET" and m:
-            return self._one(self._targets, m.group(1), "target")
-        if method == "GET" and path == "/api/v1/results":
-            return self._results
-        m = re.fullmatch(r"/api/v1/results/([^/]+)", path)
-        if method == "GET" and m:
-            return self._one(self._results, m.group(1), "result")
-        if method == "GET" and path == "/api/v1/sequences":
-            return []
-```
-and add a helper method:
-```python
-    def _one(self, items: list[dict], item_id: str, kind: str) -> dict:
-        for it in items:
-            if it["id"] == item_id:
-                return it
-        raise NotFoundError(f"{kind} {item_id} not found", status_code=404)
-```
+    def create(self, request):
+        from adaptyv.models import CreateExpResponse
+        data = self._c._request("POST", "/api/v1/experiments",
+                                 json=request.model_dump(exclude_none=True))
+        return CreateExpResponse.model_validate(data)
 
-- [ ] **Step 5: Write the three resources**
+    def submit(self, experiment_id: str) -> dict:
+        return self._c._request("POST", f"/api/v1/experiments/{experiment_id}/submit")
 
-`adaptyv/resources/targets.py`:
+    def cost_estimate(self, request):
+        from adaptyv.models import CostEstimateResponse
+        data = self._c._request("POST", "/api/v1/experiments/cost-estimate",
+                                 json=request.model_dump(exclude_none=True))
+        return CostEstimateResponse.model_validate(data)
+```
+  In `MockTransport.request`, add before the final raise:
+```python
+        if method == "POST" and path == "/api/v1/experiments":
+            return {"experiment_id": "99999999-9999-9999-9999-999999999999"}
+        m = re.fullmatch(r"/api/v1/experiments/([^/]+)/submit", path)
+        if method == "POST" and m:
+            return {"experiment_id": m.group(1), "status": "quote_sent"}
+        if method == "POST" and path == "/api/v1/experiments/cost-estimate":
+            return {"breakdown": {"total_usd": 4200}, "warnings": []}
+        if method == "POST" and path == "/api/v1/sequences":
+            body = json or {}
+            return {"experiment_id": "11111111-1111-1111-1111-111111111111",
+                    "experiment_code": body.get("experiment_code", "EXP-1001"),
+                    "added_count": len(body.get("sequences", [])),
+                    "sequence_ids": ["33333333-0000-0000-0000-0000000000aa"]}
+```
+- [ ] **Step 4: Run** → PASS. **Step 5: Commit** `git commit -am "feat: experiment write methods (create/submit/cost_estimate) + mock POST routes"`.
+
+---
+
+### Task 6: sequences, targets, results resources
+
+**Files:** Create `adaptyv/resources/{sequences,targets,results}.py`; Modify `adaptyv/client.py`;
+Test `tests/test_other_resources.py`.
+
+**Interfaces:**
+- `sequences.list(**q) -> list[SequenceListItem]`, `sequences.get(id) -> SequenceInfo`,
+  `sequences.add(request: SequenceAddRequest) -> SequenceAddResponse` (`POST /api/v1/sequences`)
+- `targets.list(*, search=None, selfservice_only=None, detailed=None, **q) -> list[TargetInfo]`,
+  `targets.get(id) -> TargetInfo`
+- `results.list(**q) -> list[ResultInfo]`, `results.get(id) -> ResultInfo`
+
+- [ ] **Step 1: Failing test** — `tests/test_other_resources.py`:
+```python
+from adaptyv import AdaptyvClient
+from adaptyv.models import (ResultInfo, SequenceAddRequest, SequenceAddResponse,
+                            SequenceEntry, TargetInfo)
+
+def test_targets_search_returns_typed():
+    ts = AdaptyvClient(mock=True).targets.list(search="IL")
+    assert ts and all(isinstance(t, TargetInfo) for t in ts)
+
+def test_results_list_discriminated():
+    rs = AdaptyvClient(mock=True).results.list()
+    assert rs and isinstance(rs[0], ResultInfo)
+    assert rs[0].summary[0].result_type == "affinity"
+
+def test_sequences_add():
+    r = AdaptyvClient(mock=True).sequences.add(SequenceAddRequest(
+        experiment_code="EXP-1001", sequences=[SequenceEntry(aa_string="MKAA")]))
+    assert isinstance(r, SequenceAddResponse) and r.added_count == 1
+```
+- [ ] **Step 2: Run** → FAIL. **Step 3:** write the three resource files (same `_paged`/`_request`
+  pattern as Task 4), e.g. `adaptyv/resources/targets.py`:
 ```python
 from __future__ import annotations
-
 from typing import TYPE_CHECKING
-
 from adaptyv.models import TargetInfo
-
 if TYPE_CHECKING:
     from adaptyv.client import AdaptyvClient
-
 
 class TargetsResource:
-    def __init__(self, client: "AdaptyvClient") -> None:
-        self._client = client
-
-    def list(self) -> list[TargetInfo]:
-        data = self._client._request("GET", "/api/v1/targets")
-        return [TargetInfo.model_validate(d) for d in data]
-
+    def __init__(self, client): self._c = client
+    def list(self, *, search=None, selfservice_only=None, detailed=None, limit=None, offset=None):
+        params = {k: v for k, v in dict(search=search, selfservice_only=selfservice_only,
+                  detailed=detailed, limit=limit, offset=offset).items() if v is not None}
+        return self._c._paged("/api/v1/targets", TargetInfo, params)
     def get(self, target_id: str) -> TargetInfo:
-        data = self._client._request("GET", f"/api/v1/targets/{target_id}")
-        return TargetInfo.model_validate(data)
+        return TargetInfo.model_validate(self._c._request("GET", f"/api/v1/targets/{target_id}"))
 ```
-
-`adaptyv/resources/results.py`:
+  `adaptyv/resources/results.py` (list/get → `ResultInfo`) and `adaptyv/resources/sequences.py`
+  (`list` → `SequenceListItem`, `get` → `SequenceInfo`, `add` → POST returning `SequenceAddResponse`)
+  follow the identical pattern. Wire in `client.py` after `self.experiments = ...`:
 ```python
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-from adaptyv.models import ResultInfo
-
-if TYPE_CHECKING:
-    from adaptyv.client import AdaptyvClient
-
-
-class ResultsResource:
-    def __init__(self, client: "AdaptyvClient") -> None:
-        self._client = client
-
-    def list(self) -> list[ResultInfo]:
-        data = self._client._request("GET", "/api/v1/results")
-        return [ResultInfo.model_validate(d) for d in data]
-
-    def get(self, result_id: str) -> ResultInfo:
-        data = self._client._request("GET", f"/api/v1/results/{result_id}")
-        return ResultInfo.model_validate(data)
-```
-
-`adaptyv/resources/sequences.py`:
-```python
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-from adaptyv.models import SequenceInfo, SequenceListItem
-
-if TYPE_CHECKING:
-    from adaptyv.client import AdaptyvClient
-
-
-class SequencesResource:
-    def __init__(self, client: "AdaptyvClient") -> None:
-        self._client = client
-
-    def list(self) -> list[SequenceListItem]:
-        data = self._client._request("GET", "/api/v1/sequences")
-        return [SequenceListItem.model_validate(d) for d in data]
-
-    def get(self, sequence_id: str) -> SequenceInfo:
-        data = self._client._request("GET", f"/api/v1/sequences/{sequence_id}")
-        return SequenceInfo.model_validate(data)
-```
-
-- [ ] **Step 6: Wire resources into the client**
-
-In `adaptyv/client.py`, add imports and attributes after `self.experiments = ...`:
-```python
-from adaptyv.resources.sequences import SequencesResource
-from adaptyv.resources.targets import TargetsResource
-from adaptyv.resources.results import ResultsResource
-```
-```python
+        from adaptyv.resources.sequences import SequencesResource
+        from adaptyv.resources.targets import TargetsResource
+        from adaptyv.resources.results import ResultsResource
         self.sequences = SequencesResource(self)
         self.targets = TargetsResource(self)
         self.results = ResultsResource(self)
 ```
-
-- [ ] **Step 7: Run tests to verify they pass**
-
-Run: `python -m pytest tests/test_other_resources.py tests/test_fixtures_contract.py -q`
-Expected: PASS (all green).
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add adaptyv/resources/ adaptyv/transport.py adaptyv/client.py adaptyv/mocks/fixtures/targets.json tests/test_other_resources.py
-git commit -m "feat: add sequences, targets, results resources"
-```
+  Add a `/api/v1/sequences/{id}` mock detail route + a `sequence_detail.json` fixture (nested
+  `experiment`, nullable `aa_string`) so `sequences.get` works.
+- [ ] **Step 4: Run** `python3 -m pytest -q` → PASS. **Step 5: Commit** `git commit -am "feat: sequences, targets, results resources"`.
 
 ---
 
-### Task 6: LiveTransport (httpx) with retry + error mapping
+### Task 7: LiveTransport (envelope-aware, Retry-After, idempotent-only retry)
 
-**Files:**
-- Create: `adaptyv/live_transport.py`
-- Test: `tests/test_live_transport.py`
+**Files:** Create `adaptyv/live_transport.py`; Test `tests/test_live_transport.py`.
 
-**Interfaces:**
-- Consumes: `adaptyv.errors` (Task 3).
-- Produces: `adaptyv.live_transport.LiveTransport(base_url: str, api_key: str | None, max_retries: int = 2)` implementing the `Transport` protocol; retries on 429/5xx with backoff; maps error responses to typed exceptions; raises `AuthError` if no key on a non-health call.
+**Interfaces:** `LiveTransport(base_url, api_key, *, max_retries=2, sleep=time.sleep)` implementing
+`Transport`; retries **only idempotent** methods (GET/HEAD) on 429/5xx, honoring `Retry-After`;
+maps errors to typed exceptions using the real `{error, request_id}` body; raises `AuthError`
+if no key on a non-health call. `sleep` is injectable for tests.
 
-- [ ] **Step 1: Write the failing test** (uses `respx` to mock httpx)
-
-`tests/test_live_transport.py`:
+- [ ] **Step 1: Failing test** — `tests/test_live_transport.py`:
 ```python
-import httpx
-import pytest
-import respx
-
-from adaptyv.errors import AuthError, NotFoundError
+import httpx, pytest, respx
+from adaptyv.errors import AuthError, NotFoundError, ValidationError
 from adaptyv.live_transport import LiveTransport
-
 BASE = "https://devs.adaptyvbio.com"
 
+def _lt(**kw): return LiveTransport(base_url=BASE, api_key="secret", sleep=lambda *_: None, **kw)
 
 @respx.mock
-def test_get_success_sends_bearer_and_parses_json():
-    route = respx.get(f"{BASE}/api/v1/experiments").mock(
-        return_value=httpx.Response(200, json=[{"code": "EXP-1"}]))
-    t = LiveTransport(base_url=BASE, api_key="secret")
-    data = t.request("GET", "/api/v1/experiments")
-    assert data == [{"code": "EXP-1"}]
-    assert route.calls.last.request.headers["authorization"] == "Bearer secret"
-
+def test_get_sends_bearer_and_parses_envelope():
+    r = respx.get(f"{BASE}/api/v1/experiments").mock(
+        return_value=httpx.Response(200, json={"items": [], "total": 0, "count": 0, "offset": 0}))
+    assert _lt().request("GET", "/api/v1/experiments")["total"] == 0
+    assert r.calls.last.request.headers["authorization"] == "Bearer secret"
 
 @respx.mock
-def test_404_maps_to_not_found():
-    respx.get(f"{BASE}/api/v1/experiments/x").mock(
-        return_value=httpx.Response(404, json={
-            "error": "not_found", "message": "nope", "status_code": 404,
-            "request_id": "55555555-5555-5555-5555-555555555555"}))
-    t = LiveTransport(base_url=BASE, api_key="secret")
-    with pytest.raises(NotFoundError):
-        t.request("GET", "/api/v1/experiments/x")
-
+def test_error_body_uses_error_field_and_maps_type():
+    respx.get(f"{BASE}/api/v1/x").mock(return_value=httpx.Response(
+        404, json={"error": "experiment not found",
+                   "request_id": "55555555-5555-5555-5555-555555555555"}))
+    with pytest.raises(NotFoundError) as ei:
+        _lt().request("GET", "/api/v1/x")
+    assert "experiment not found" in str(ei.value)
 
 @respx.mock
-def test_retries_then_succeeds_on_429():
-    respx.get(f"{BASE}/api/v1/results").mock(side_effect=[
-        httpx.Response(429, json={"error": "rate", "message": "slow down",
-                                  "status_code": 429, "request_id":
-                                  "66666666-6666-6666-6666-666666666666"}),
-        httpx.Response(200, json=[]),
-    ])
-    t = LiveTransport(base_url=BASE, api_key="secret", max_retries=2)
-    assert t.request("GET", "/api/v1/results") == []
+def test_retries_get_on_429_then_succeeds_exactly_twice():
+    route = respx.get(f"{BASE}/api/v1/results").mock(side_effect=[
+        httpx.Response(429, headers={"Retry-After": "0"}, json={"error": "slow", "request_id": "x"}),
+        httpx.Response(200, json={"items": [], "total": 0, "count": 0, "offset": 0})])
+    _lt(max_retries=2).request("GET", "/api/v1/results")
+    assert route.call_count == 2
 
+@respx.mock
+def test_post_is_not_retried():
+    route = respx.post(f"{BASE}/api/v1/experiments").mock(
+        return_value=httpx.Response(503, json={"error": "down", "request_id": "x"}))
+    with pytest.raises(Exception):
+        _lt(max_retries=2).request("POST", "/api/v1/experiments", json={})
+    assert route.call_count == 1
 
-def test_missing_key_raises_auth_error():
-    t = LiveTransport(base_url=BASE, api_key=None)
+def test_missing_key_raises_auth():
     with pytest.raises(AuthError):
-        t.request("GET", "/api/v1/experiments")
+        LiveTransport(base_url=BASE, api_key=None).request("GET", "/api/v1/experiments")
 ```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `python -m pytest tests/test_live_transport.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'adaptyv.live_transport'`.
-
-- [ ] **Step 3: Write LiveTransport**
-
-`adaptyv/live_transport.py`:
+- [ ] **Step 2: Run** → FAIL. **Step 3: `adaptyv/live_transport.py`:**
 ```python
 from __future__ import annotations
-
 import time
-from typing import Any
-
+from typing import Any, Callable
 import httpx
-
 from adaptyv.errors import AuthError, TransportError, error_for_status
 
-_RETRY_STATUS = {429, 500, 502, 503, 504}
+_RETRY = {429, 500, 502, 503, 504}
+_IDEMPOTENT = {"GET", "HEAD"}
 
 
 class LiveTransport:
     def __init__(self, base_url: str, api_key: str | None, *, max_retries: int = 2,
-                 timeout: float = 30.0) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._api_key = api_key
-        self._max_retries = max_retries
-        self._client = httpx.Client(timeout=timeout)
+                 timeout: float = 30.0, sleep: Callable[[float], None] = time.sleep) -> None:
+        self._base = base_url.rstrip("/")
+        self._key = api_key
+        self._max = max_retries
+        self._sleep = sleep
+        self._http = httpx.Client(timeout=timeout)
 
-    def request(self, method: str, path: str, *, params: dict | None = None,
-                json: dict | None = None) -> Any:
-        if not self._api_key and not path.startswith("/api/v1/info/health"):
-            raise AuthError("No API key. Pass api_key= or set ADAPTYV_API_KEY, "
-                            "or use AdaptyvClient(mock=True).", status_code=401)
-        url = f"{self._base_url}{path}"
-        headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-        last_exc: Exception | None = None
-        for attempt in range(self._max_retries + 1):
-            try:
-                resp = self._client.request(method, url, params=params, json=json,
-                                            headers=headers)
-            except httpx.HTTPError as exc:  # network-level failure
-                last_exc = TransportError(f"network error: {exc}")
-                if attempt < self._max_retries:
-                    time.sleep(0.2 * (attempt + 1))
-                    continue
-                raise last_exc
-            if resp.status_code in _RETRY_STATUS and attempt < self._max_retries:
-                time.sleep(0.2 * (attempt + 1))
+    def request(self, method: str, path: str, *, params=None, json=None) -> Any:
+        if not self._key and not path.startswith("/api/v1/info/health"):
+            raise AuthError("No API key. Pass api_key=, set ADAPTYV_API_KEY, or use mock=True.",
+                            status_code=401)
+        url = f"{self._base}{path}"
+        headers = {"Authorization": f"Bearer {self._key}"} if self._key else {}
+        attempts = self._max + 1 if method.upper() in _IDEMPOTENT else 1
+        for i in range(attempts):
+            resp = self._http.request(method, url, params=params, json=json, headers=headers)
+            if resp.status_code in _RETRY and i < attempts - 1:
+                self._sleep(float(resp.headers.get("Retry-After", 0.2 * (i + 1))))
                 continue
             if resp.status_code >= 400:
                 raise _to_error(resp)
             return resp.json() if resp.content else None
-        raise last_exc or TransportError("request failed")
+        raise TransportError("request failed after retries")
 
 
 def _to_error(resp: httpx.Response):
-    message = f"HTTP {resp.status_code}"
-    request_id = None
+    msg, rid = f"HTTP {resp.status_code}", resp.headers.get("x-request-id")
     try:
         body = resp.json()
-        message = body.get("message", message)
-        request_id = body.get("request_id")
+        msg = body.get("error", msg)
+        rid = body.get("request_id", rid)
     except Exception:
         pass
-    return error_for_status(resp.status_code, message, request_id)
+    return error_for_status(resp.status_code, msg, rid)
 ```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `python -m pytest tests/test_live_transport.py -q`
-Expected: PASS (4 passed).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add adaptyv/live_transport.py tests/test_live_transport.py
-git commit -m "feat: add LiveTransport with retry and typed error mapping"
-```
+- [ ] **Step 4: Run** → PASS. **Step 5: Commit** `git commit -am "feat: LiveTransport (idempotent-only retry, Retry-After, real error body)"`.
 
 ---
 
-### Task 7: Minimal Typer CLI
+### Task 8: Minimal Typer CLI
 
-**Files:**
-- Create: `adaptyv/cli.py`
-- Test: `tests/test_cli.py`
+**Files:** Create `adaptyv/cli.py`; Test `tests/test_cli.py`.
 
-**Interfaces:**
-- Consumes: `AdaptyvClient` (Task 4).
-- Produces: `adaptyv.cli.app` (Typer app) with commands `experiments list [--mock]`
-  and `results get <id> [--mock]`, printing a concise summary. `--mock` defaults True
-  so the CLI is runnable with no key.
+**Interfaces:** `adaptyv.cli.app` with `experiments list [--mock/--no-mock]` and
+`results get <uuid> [--mock/--no-mock]`; `--mock` defaults True.
 
-- [ ] **Step 1: Write the failing test** (uses Typer's `CliRunner`)
-
-`tests/test_cli.py`:
+- [ ] **Step 1: Failing test** — `tests/test_cli.py`:
 ```python
 from typer.testing import CliRunner
-
 from adaptyv.cli import app
-
 runner = CliRunner()
 
+def test_experiments_list():
+    r = runner.invoke(app, ["experiments", "list"])
+    assert r.exit_code == 0 and "EXP-1001" in r.stdout and "done" in r.stdout
 
-def test_experiments_list_mock():
-    result = runner.invoke(app, ["experiments", "list"])
-    assert result.exit_code == 0
-    assert "EXP-1001" in result.stdout
-    assert "complete" in result.stdout
-
-
-def test_results_get_mock():
-    result = runner.invoke(app, ["results", "get", "aaaaaaaa-0000-0000-0000-000000000001"])
-    assert result.exit_code == 0
-    assert "kd" in result.stdout
+def test_results_get_renders_affinity():
+    r = runner.invoke(app, ["results", "get", "aaaaaaaa-0000-0000-0000-000000000001"])
+    assert r.exit_code == 0 and "kd_mean" in r.stdout and "1.2e-09" in r.stdout
 ```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `python -m pytest tests/test_cli.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'adaptyv.cli'`.
-
-- [ ] **Step 3: Write the CLI**
-
-`adaptyv/cli.py`:
+- [ ] **Step 2: Run** → FAIL. **Step 3: `adaptyv/cli.py`:**
 ```python
 from __future__ import annotations
-
 import typer
-
 from adaptyv import AdaptyvClient
+from adaptyv.models import AffinityResultSummary
 
 app = typer.Typer(help="Adaptyv Foundry SDK CLI")
-experiments_app = typer.Typer(help="Experiment commands")
-results_app = typer.Typer(help="Result commands")
-app.add_typer(experiments_app, name="experiments")
-app.add_typer(results_app, name="results")
+exp = typer.Typer(); res = typer.Typer()
+app.add_typer(exp, name="experiments"); app.add_typer(res, name="results")
 
+def _c(mock): return AdaptyvClient(mock=mock)
 
-def _client(mock: bool) -> AdaptyvClient:
-    return AdaptyvClient(mock=mock)
-
-
-@experiments_app.command("list")
-def experiments_list(mock: bool = typer.Option(True, help="Use mock data (no key).")):
-    for e in _client(mock).experiments.list():
+@exp.command("list")
+def experiments_list(mock: bool = typer.Option(True)):
+    for e in _c(mock).experiments.list():
         typer.echo(f"{e.code}\t{e.status.value}\t{e.name or ''}")
 
-
-@results_app.command("get")
-def results_get(result_id: str,
-                mock: bool = typer.Option(True, help="Use mock data (no key).")):
-    result = _client(mock).results.get(result_id)
-    typer.echo(f"{result.title}")
-    for s in result.summary:
-        typer.echo(f"  {s.readout}={s.value} {s.value_units or ''} ({s.sequence})")
-
+@res.command("get")
+def results_get(result_id: str, mock: bool = typer.Option(True)):
+    r = _c(mock).results.get(result_id)
+    typer.echo(r.title)
+    for s in r.summary:
+        if isinstance(s, AffinityResultSummary):
+            typer.echo(f"  {s.sequence.name or s.sequence.aa_string}: kd_mean={s.kd_mean} {s.kd_units}"
+                       f"  perf={s.performance}  control={s.positive_control}")
+        else:
+            typer.echo(f"  {s.sequence_name or s.sequence_id}: tm={s.tm}")
 
 if __name__ == "__main__":
     app()
 ```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `python -m pytest tests/test_cli.py -q`
-Expected: PASS (2 passed).
-
-- [ ] **Step 5: Full suite green + commit**
-
-Run: `python -m pytest -q`
-Expected: PASS (all tasks' tests green).
-
-```bash
-git add adaptyv/cli.py tests/test_cli.py
-git commit -m "feat: add minimal Typer CLI (experiments list, results get)"
-```
+- [ ] **Step 4: Run** `python3 -m pytest -q` (full suite) → PASS. **Step 5: Commit** `git commit -am "feat: minimal Typer CLI"`.
 
 ---
 
 ## Phase 1 Definition of Done
 
-- `pip install -e ".[dev]"` succeeds.
-- `python -m pytest -q` is fully green.
-- `python -c "from adaptyv import AdaptyvClient; print(AdaptyvClient(mock=True).experiments.list()[0].code)"` prints `EXP-1001`.
-- `adaptyv experiments list` prints the mock experiments with no API key.
-- Contract test guarantees every fixture validates against the real pydantic models.
+- `python3 -m pip install -e ".[dev]"` succeeds; `python3 -m pytest -q` fully green.
+- `python3 -c "from adaptyv import AdaptyvClient as C; print(C(mock=True).experiments.list()[0].code)"` → `EXP-1001`.
+- `adaptyv experiments list` prints mock experiments with no key.
+- Contract test validates fixtures against the **pinned OpenAPI schema** (sha256 recorded above).
+- Mock and live transports return identical shapes (pagination envelopes for lists).
 
-**Next phase (written just-in-time):** Phase 2 — Governance layer (hash-chained
-audit log + approval state machine), then Phase 3 — ExperimentWatcher agent
-(anomaly detector + email drafter) with the anomalous fixtures.
+**Next (written just-in-time):** Phase 2 — governance (approval state machine + audit;
+hash-chaining is a labeled *stretch*), then Phase 3 — ExperimentWatcher (anomaly policy
++ fact-injected drafting) with anomalous affinity fixtures.
 ```

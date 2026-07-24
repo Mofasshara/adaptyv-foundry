@@ -1,8 +1,9 @@
 # Adaptyv Foundry SDK + MCP + Lab Ops Agent — Project Roadmap
 
-> **Goal:** Wrap the Adaptyv Foundry lab API in a clean typed Python SDK, expose it to Claude via a TypeScript MCP server, and build a governed ExperimentWatcher agent that drafts customer result emails with human sign-off, a tamper-evident audit trail, and feedback loops.
+> **Goal:** Wrap the Adaptyv Foundry lab API in a clean typed Python SDK, expose it to Claude via a TypeScript MCP server, and build a governed ExperimentWatcher agent that drafts customer result emails with human sign-off, an audit trail, and feedback loops.
 > **Started:** 2026-07-24
 > **Constraints:** Take-home scope (demoable in a 2-min Loom); Python SDK + TypeScript MCP are hard requirements; no live API key (mock mode mandatory); solo build; code quality/type-safety/clean README are the primary review criteria.
+> **Scope strategy:** **Core solid first**, differentiators as labeled **stretch**. Core = faithful SDK + MCP + one excellent watcher path + HITL + deterministic evals. Stretch = hash-chained audit, 3 feedback loops, live LLM-judge, TestPyPI publish.
 
 ---
 
@@ -12,12 +13,12 @@
 |--------------|-------|
 | ✅ Done       | 0     |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 30    |
+| ⏳ Pending    | 33    |
 | 🚫 Blocked    | 0     |
 
-**Total estimated time:** ≈41h (~5d)
+**Total estimated time:** ≈46h (~5.75d) — of which ≈13h is labeled stretch
 **Elapsed time:** —
-**Remaining estimate:** ≈41h (~5d)
+**Remaining estimate:** ≈46h (~5.75d)
 
 ---
 
@@ -25,17 +26,18 @@
 
 | Tool / Technology | Purpose | Introduced In |
 |-------------------|---------|---------------|
-| Python 3.11+ | SDK, agent, sidecar language | Phase 1 |
-| pydantic v2 | Typed models mirroring the OpenAPI schemas | Phase 1 |
+| Python 3.11+ (venv) | SDK, agent, bridge language | Phase 1 |
+| pydantic v2 | Typed models mirroring the OpenAPI schemas (incl. discriminated unions, pagination) | Phase 1 |
 | httpx | Sync HTTP client for LiveTransport | Phase 1 |
 | Typer | Human-facing CLI (`adaptyv ...`) | Phase 1 |
 | pytest + respx | Testing; httpx mocking | Phase 1 |
-| SQLite | Hash-chained append-only audit store | Phase 2 |
+| jsonschema | Contract test: fixtures validated against pinned OpenAPI schema | Phase 1 |
+| SQLite | Append-only audit + feedback store (hash-chaining is stretch) | Phase 2 |
 | Anthropic SDK (Claude) | Email drafting + LLM-as-judge | Phase 3 / 5 |
-| FastAPI | Local sidecar exposing the SDK to the MCP | Phase 4 |
 | TypeScript + @modelcontextprotocol/sdk | MCP server for Claude Desktop/Code | Phase 4 |
+| Subprocess JSON bridge (`python -m adaptyv --json`) | MCP→SDK delegation (replaces FastAPI sidecar) | Phase 4 |
 | Zod | MCP tool parameter schemas + descriptions | Phase 4 |
-| hatchling + TestPyPI | Packaging & (test) distribution | Phase 6 |
+| hatchling + TestPyPI | Packaging & (test) distribution — **stretch** | Phase 6 |
 
 ---
 
@@ -43,81 +45,83 @@
 
 ### Phase 1 — SDK Core  ⏳
 
-**Goal:** Typed, sync Python SDK with mock mode — `AdaptyvClient(mock=True)` returns typed lab data with no API key. (Detailed plan: `docs/superpowers/plans/2026-07-24-phase1-sdk-core.md`)
-**Phase estimate:** ~7.5h
+**Goal:** Typed, sync Python SDK faithful to the real API, with mock mode and read+write coverage — `AdaptyvClient(mock=True)` returns typed lab data with no key; mock/live shapes identical. (Plan: `docs/superpowers/plans/2026-07-24-phase1-sdk-core.md`, v2 schema-corrected)
+**Phase estimate:** ~11h
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Scaffold SDK package (pyproject, layout, pytest) | ⏳ Pending | 30m | — | — | |
-| 2 | Implement pydantic models + enums | ⏳ Pending | 1h | — | — | Fields grounded in real OpenAPI spec |
-| 3 | Implement transport protocol, errors, MockTransport + fixtures + contract test | ⏳ Pending | 2h | — | — | Contract test binds fixtures to models |
-| 4 | Implement AdaptyvClient + experiments resource | ⏳ Pending | 1h | — | — | |
-| 5 | Implement sequences, targets, results resources | ⏳ Pending | 1h | — | — | |
-| 6 | Implement LiveTransport (httpx) + retry + error mapping | ⏳ Pending | 1h30m | — | — | |
-| 7 | Implement minimal Typer CLI | ⏳ Pending | 45m | — | — | |
+| 1 | Scaffold package (venv, pyproject) + vendor pinned OpenAPI spec | ⏳ Pending | 45m | — | — | core |
+| 2 | Schema-faithful pydantic models (enums, discriminated results, pagination, list-vs-detail) | ⏳ Pending | 2h | — | — | core; derived from raw spec |
+| 3 | Transport, errors, pagination-aware MockTransport + fixtures + OpenAPI contract test | ⏳ Pending | 2h30m | — | — | core |
+| 4 | AdaptyvClient + paginated experiments resource | ⏳ Pending | 1h | — | — | core |
+| 5 | Experiment write methods (create/submit/cost_estimate) | ⏳ Pending | 1h30m | — | — | core; needed by MCP |
+| 6 | sequences, targets, results resources (incl. sequences.add) | ⏳ Pending | 1h30m | — | — | core |
+| 7 | LiveTransport (idempotent-only retry, Retry-After, real error body) | ⏳ Pending | 1h30m | — | — | core |
+| 8 | Minimal Typer CLI | ⏳ Pending | 45m | — | — | core |
 
 ### Phase 2 — Governance Layer  ⏳
 
-**Goal:** Tamper-evident audit trail and human-in-the-loop approval state machine that the agent and MCP write through.
-**Phase estimate:** ~6h
+**Goal:** Human-in-the-loop approval state machine + audit trail the agent and MCP write through.
+**Phase estimate:** ~6h (~2h of it stretch)
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Implement hash-chained append-only SQLite audit log + `verify` | ⏳ Pending | 2h | — | — | |
-| 2 | Implement draft approval state machine (Draft→PendingReview→Approved/Rejected) | ⏳ Pending | 1h30m | — | — | Agent cannot self-approve |
-| 3 | Implement critical-anomaly hard-block + human acknowledgement | ⏳ Pending | 1h | — | — | |
-| 4 | Wire audit + data lineage into state-changing operations | ⏳ Pending | 1h30m | — | — | |
+| 1 | Append-only SQLite audit log + query | ⏳ Pending | 1h30m | — | — | core |
+| 2 | Draft approval state machine (Draft→PendingReview→Approved/Rejected); agent cannot self-approve | ⏳ Pending | 1h30m | — | — | core |
+| 3 | Critical-anomaly hard-block + human acknowledgement | ⏳ Pending | 1h | — | — | core |
+| 4 | Hash-chain the audit log + `verify`; separate feedback store for corrected drafts | ⏳ Pending | 2h | — | — | **stretch** |
 
 ### Phase 3 — ExperimentWatcher Agent  ⏳
 
-**Goal:** Given completed results, produce a plain-English customer-update draft (PendingReview) + structured anomaly report; numbers injected from data, never invented.
-**Phase estimate:** ~6.25h
+**Goal:** Given completed results, produce a plain-English customer-update draft (PendingReview) + structured anomaly report; numbers substituted from data via typed placeholders.
+**Phase estimate:** ~7h
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Implement deterministic AnomalyDetector rules + tests | ⏳ Pending | 2h | — | — | all-failed, control-out-of-range = critical |
-| 2 | Add anomalous fixtures (all-failed, control-out-of-range) | ⏳ Pending | 45m | — | — | |
-| 3 | Implement EmailDrafter (Claude; facts injected) | ⏳ Pending | 2h | — | — | Model IDs via claude-api skill |
-| 4 | Implement Watcher orchestration (detect→draft→PendingReview→audit) | ⏳ Pending | 1h30m | — | — | |
+| 1 | Define versioned anomaly policy (thresholds, control identity, units, missing-data semantics) | ⏳ Pending | 1h | — | — | core; policy is an input, not hardcoded |
+| 2 | Deterministic AnomalyDetector + tests | ⏳ Pending | 2h | — | — | core |
+| 3 | Add anomalous affinity fixtures (all-failed, control-out-of-policy) | ⏳ Pending | 45m | — | — | core |
+| 4 | EmailDrafter (Claude; typed placeholder → validated numeric substitution) | ⏳ Pending | 2h | — | — | core; model IDs via claude-api skill |
+| 5 | Watcher orchestration with durable idempotency key (experiment_id, result_id, version) | ⏳ Pending | 1h30m | — | — | core |
 
-### Phase 4 — Sidecar + MCP Server  ⏳
+### Phase 4 — MCP Server (via subprocess bridge)  ⏳
 
-**Goal:** One-command MCP server in Claude Desktop driving the lab via ~8 curated task-shaped tools, delegating to the Python SDK through a local sidecar.
-**Phase estimate:** ~8h
+**Goal:** One-command MCP server in Claude Desktop driving the lab via ~8 curated task-shaped tools, delegating to the Python SDK through a subprocess JSON bridge.
+**Phase estimate:** ~7h
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Implement FastAPI sidecar exposing SDK + draft capability | ⏳ Pending | 1h30m | — | — | `adaptyv serve` |
-| 2 | Scaffold TS MCP server + sidecar client + auto-spawn | ⏳ Pending | 2h | — | — | |
-| 3 | Implement ~8 task-shaped tools with Zod descriptions | ⏳ Pending | 3h | — | — | Not 1:1 CRUD wrappers |
-| 4 | MCP tool tests against a stubbed sidecar | ⏳ Pending | 1h30m | — | — | |
+| 1 | `python -m adaptyv --json <op>` bridge command (stdin/stdout JSON, typed errors) | ⏳ Pending | 1h30m | — | — | core; replaces FastAPI sidecar |
+| 2 | Scaffold TS MCP server + bridge client (spawn per call) | ⏳ Pending | 1h30m | — | — | core |
+| 3 | ~8 task-shaped tools with Zod descriptions | ⏳ Pending | 3h | — | — | core; not 1:1 CRUD |
+| 4 | MCP tool tests against a stubbed bridge | ⏳ Pending | 1h | — | — | core |
 
 ### Phase 5 — Evals + Loops  ⏳
 
-**Goal:** Trustworthy, self-improving output — deterministic guards + LLM-judge scoring, plus the three feedback loops.
-**Phase estimate:** ~8h
+**Goal:** Trustworthy output — deterministic guards (core) + LLM-judge and feedback loops (stretch).
+**Phase estimate:** ~8h (~5h of it stretch)
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Build golden set (results → expected facts) | ⏳ Pending | 1h | — | — | |
-| 2 | Implement deterministic guards (no hallucinated numbers, anomalies caught) | ⏳ Pending | 1h30m | — | — | |
-| 3 | Implement LLM-judge rubric (accuracy/completeness/tone) + thresholds | ⏳ Pending | 2h | — | — | |
-| 4 | Implement eval→improve loop (`make eval` report) | ⏳ Pending | 1h | — | — | |
-| 5 | Implement human-feedback flywheel (promote audit rejections → golden set) | ⏳ Pending | 1h30m | — | — | |
-| 6 | Implement autonomous watch loop (interval) | ⏳ Pending | 1h | — | — | |
+| 1 | Golden set (results → expected typed facts) | ⏳ Pending | 1h | — | — | core |
+| 2 | Deterministic guards (exact fact-id substitution, anomalies caught) | ⏳ Pending | 1h30m | — | — | core |
+| 3 | Eval→improve loop (`make eval` report) | ⏳ Pending | 1h | — | — | core |
+| 4 | LLM-judge rubric (accuracy/completeness/tone) — reported as artifact, not CI gate | ⏳ Pending | 2h | — | — | **stretch** |
+| 5 | Human-feedback flywheel (promote feedback-store corrections → golden set) | ⏳ Pending | 1h30m | — | — | **stretch** |
+| 6 | Autonomous watch loop (interval, idempotent) | ⏳ Pending | 1h | — | — | **stretch** |
 
 ### Phase 6 — Polish & Deliverables  ⏳
 
-**Goal:** Reviewer-ready repo: README, architecture diagram, learning guide, TestPyPI packaging, Loom script.
-**Phase estimate:** ~5.25h
+**Goal:** Reviewer-ready repo: README, architecture diagram, learning guide, packaging, Loom script.
+**Phase estimate:** ~6h (~1h of it stretch)
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Write README (value, quickstart, honest scope) | ⏳ Pending | 1h30m | — | — | |
-| 2 | Write architecture diagram + data-flow doc | ⏳ Pending | 1h | — | — | |
-| 3 | Finalize LEARNING_GUIDE | ⏳ Pending | 1h | — | — | |
-| 4 | TestPyPI packaging + install verification | ⏳ Pending | 1h | — | — | |
-| 5 | Write 2-minute Loom demo script | ⏳ Pending | 45m | — | — | User records |
+| 1 | README (value, quickstart, honest scope + limitations) | ⏳ Pending | 1h30m | — | — | core |
+| 2 | Architecture diagram + data-flow doc | ⏳ Pending | 1h | — | — | core |
+| 3 | Finalize LEARNING_GUIDE | ⏳ Pending | 1h | — | — | core |
+| 4 | Loom demo script | ⏳ Pending | 45m | — | — | core; user records |
+| 5 | TestPyPI packaging + install verification | ⏳ Pending | 1h | — | — | **stretch** |
 
 ---
 
@@ -125,4 +129,8 @@
 
 > The roadmap above reflects the current plan. This log records every deviation from the original design — it is permanent and append-only.
 
-_No changes yet._
+| Date | Change | Reason | Impact | Original Plan |
+|------|--------|--------|--------|---------------|
+| 2026-07-24 15:30 | Corrected the entire SDK data model against the raw OpenAPI spec | A Codex pre-implementation review + raw-JSON verification proved the v1 models/fixtures were built on a hallucinated WebFetch schema summary (wrong enums, missing pagination envelope, flattened result union) | Rewrote Phase 1 plan (models, transport, fixtures, contract test); added tests/data pinned spec + jsonschema contract test | v1 models with invented `ExperimentStatus` values, bare-array list responses, flat `ResultSummary` |
+| 2026-07-24 15:32 | MCP→SDK mechanism changed from auto-spawned FastAPI sidecar to a subprocess JSON bridge (`python -m adaptyv --json`) | Codex flagged (and user agreed) that stdio-MCP auto-spawning a web server hides port/readiness/cleanup/version-skew complexity not worth it for a take-home | Phase 4 tasks re-specified around a per-call subprocess bridge; removed FastAPI from core stack | Phase 4 built a FastAPI sidecar auto-spawned by the MCP |
+| 2026-07-24 15:34 | Re-sequenced to core-first; tagged hash-chain audit, 3 loops, live LLM-judge, TestPyPI as stretch; added SDK write methods to Phase 1 | Codex flagged ~41h scope risked leaving hard requirements shallow, and that Phase 1 lacked the write methods Phase 4's MCP needs | Phase 1 grew (+write tasks); Phases 2/5/6 items tagged core/stretch; total ≈46h with ~13h stretch | All 30 tasks equal priority; Phase 1 read-only |

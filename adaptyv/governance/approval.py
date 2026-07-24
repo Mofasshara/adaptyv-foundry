@@ -29,17 +29,21 @@ class ApprovalStore:
         anomalies = anomalies or []
         draft_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
-        self._conn.execute(
-            """INSERT INTO drafts
-               (draft_id,experiment_id,result_id,status,body,anomalies,created_by,created_at,anomalies_acknowledged)
-               VALUES (?,?,?,?,?,?,?,?,0)""",
-            (draft_id, experiment_id, result_id, DraftStatus.PENDING_REVIEW.value, body,
-             json.dumps([a.model_dump(mode="json") for a in anomalies]),
-             json.dumps(created_by.model_dump(mode="json")), created_at),
-        )
-        self._audit.record(created_by, "draft.create", "draft", draft_id, "pending_review",
-                           {"experiment_id": experiment_id, "result_id": result_id,
-                            "anomaly_count": len(anomalies)})
+
+        def _do() -> None:
+            self._conn.execute(
+                """INSERT INTO drafts
+                   (draft_id,experiment_id,result_id,status,body,anomalies,created_by,created_at,anomalies_acknowledged)
+                   VALUES (?,?,?,?,?,?,?,?,0)""",
+                (draft_id, experiment_id, result_id, DraftStatus.PENDING_REVIEW.value, body,
+                 json.dumps([a.model_dump(mode="json") for a in anomalies]),
+                 json.dumps(created_by.model_dump(mode="json")), created_at),
+            )
+            self._audit.record(created_by, "draft.create", "draft", draft_id, "pending_review",
+                               {"experiment_id": experiment_id, "result_id": result_id,
+                                "anomaly_count": len(anomalies)})
+
+        self._mutate_and_record(_do)
         return self.get(draft_id)
 
     def get(self, draft_id: str) -> Draft:
@@ -63,33 +67,48 @@ class ApprovalStore:
         if has_unacknowledged_critical(draft):
             raise AnomalyNotAcknowledgedError(
                 f"draft {draft_id} has an unacknowledged critical anomaly; acknowledge before approving")
-        self._set_review(draft_id, DraftStatus.APPROVED, reviewer, None)
-        self._audit.record(reviewer, "draft.approve", "draft", draft_id, "approved")
+        def _do() -> None:
+            self._set_review(draft_id, DraftStatus.APPROVED, reviewer, None)
+            self._audit.record(reviewer, "draft.approve", "draft", draft_id, "approved")
+
+        self._mutate_and_record(_do)
         return self.get(draft_id)
 
     def reject(self, draft_id: str, reviewer: Actor, note: str) -> Draft:
         draft = self.get(draft_id)
         self._require_human(reviewer)
         self._require_status(draft, DraftStatus.PENDING_REVIEW)
-        self._set_review(draft_id, DraftStatus.REJECTED, reviewer, note)
-        self._audit.record(reviewer, "draft.reject", "draft", draft_id, "rejected", {"note": note})
+
+        def _do() -> None:
+            self._set_review(draft_id, DraftStatus.REJECTED, reviewer, note)
+            self._audit.record(reviewer, "draft.reject", "draft", draft_id, "rejected", {"note": note})
+
+        self._mutate_and_record(_do)
         return self.get(draft_id)
 
     def mark_sent(self, draft_id: str, actor: Actor) -> Draft:
         draft = self.get(draft_id)
         self._require_status(draft, DraftStatus.APPROVED)
-        self._conn.execute("UPDATE drafts SET status=? WHERE draft_id=?",
-                           (DraftStatus.SENT.value, draft_id))
-        self._audit.record(actor, "draft.send", "draft", draft_id, "sent")
+
+        def _do() -> None:
+            self._conn.execute("UPDATE drafts SET status=? WHERE draft_id=?",
+                               (DraftStatus.SENT.value, draft_id))
+            self._audit.record(actor, "draft.send", "draft", draft_id, "sent")
+
+        self._mutate_and_record(_do)
         return self.get(draft_id)
 
     def acknowledge_anomaly(self, draft_id: str, reviewer: Actor) -> Draft:
         self.get(draft_id)  # raises DraftNotFoundError if missing
         self._require_human(reviewer)
-        self._conn.execute(
-            "UPDATE drafts SET anomalies_acknowledged=1, acknowledged_by=? WHERE draft_id=?",
-            (json.dumps(reviewer.model_dump(mode="json")), draft_id))
-        self._audit.record(reviewer, "anomaly.acknowledge", "draft", draft_id, "acknowledged")
+
+        def _do() -> None:
+            self._conn.execute(
+                "UPDATE drafts SET anomalies_acknowledged=1, acknowledged_by=? WHERE draft_id=?",
+                (json.dumps(reviewer.model_dump(mode="json")), draft_id))
+            self._audit.record(reviewer, "anomaly.acknowledge", "draft", draft_id, "acknowledged")
+
+        self._mutate_and_record(_do)
         return self.get(draft_id)
 
     # -- helpers --
@@ -101,11 +120,27 @@ class ApprovalStore:
         if draft.status is not expected:
             raise InvalidTransitionError(f"draft {draft.draft_id} is {draft.status.value}, expected {expected.value}")
 
+    def _mutate_and_record(self, fn) -> None:
+        # `fn` performs a state-table write followed immediately by the
+        # paired self._audit.record() call, deliberately left uncommitted
+        # (see _set_review below) so both land in one sqlite transaction
+        # that record() commits. If either step raises, that transaction
+        # is still open on self._conn — without an explicit rollback here,
+        # a later successful mutation on this same connection would carry
+        # the earlier failed write along into ITS commit, silently landing
+        # state with no matching audit entry. See tests/test_governance_integrity.py
+        # and the atomicity contract note in adaptyv/governance/audit.py.
+        try:
+            fn()
+        except Exception:
+            self._conn.rollback()
+            raise
+
     def _set_review(self, draft_id: str, status: DraftStatus, reviewer: Actor, note: str | None) -> None:
         # No commit() here: this write and its paired self._audit.record()
-        # call (invoked immediately by the caller) must land in the same
-        # sqlite transaction so they commit atomically — see
-        # tests/test_governance_integrity.py.
+        # call (invoked immediately by the caller via _mutate_and_record)
+        # must land in the same sqlite transaction so they commit
+        # atomically — see tests/test_governance_integrity.py.
         self._conn.execute(
             "UPDATE drafts SET status=?, reviewed_by=?, review_note=? WHERE draft_id=?",
             (status.value, json.dumps(reviewer.model_dump(mode="json")), note, draft_id))

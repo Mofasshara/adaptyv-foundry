@@ -59,3 +59,62 @@ def test_failed_audit_write_leaves_no_durable_state_change(tmp_path, monkeypatch
     verifier = connect(db)
     row = verifier.execute("SELECT status FROM drafts WHERE draft_id=?", (d.draft_id,)).fetchone()
     assert row["status"] == DraftStatus.PENDING_REVIEW.value
+
+
+def test_failed_mutation_is_rolled_back_not_swept_into_a_later_commit(tmp_path, monkeypatch):
+    """A failed record() must roll back its own uncommitted state write.
+
+    Without a rollback, the failed write sits open on the shared
+    connection. If that same connection/store is later reused for a
+    DIFFERENT, successful mutation, that later mutation's record() commit
+    durably commits BOTH writes together — silently landing the earlier
+    failed operation's state change with no corresponding audit entry.
+    This is the regression the atomicity fix's rollback must prevent.
+    """
+    db = str(tmp_path / "gov.db")
+    store = _store(db)
+    d1 = store.create_draft("EXP-1", "body", created_by=AGENT)
+    d2 = store.create_draft("EXP-2", "body", created_by=AGENT)
+
+    real_record = store._audit.record
+    calls = {"n": 0}
+
+    def _flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("audit backend unavailable")
+        return real_record(*args, **kwargs)
+
+    monkeypatch.setattr(store._audit, "record", _flaky)
+
+    # First mutation: fails on its audit write.
+    with pytest.raises(RuntimeError):
+        store.approve(d1.draft_id, HUMAN)
+
+    # Second, successful mutation on the SAME store/connection (record()
+    # now works, since only the first call was made to raise).
+    out2 = store.approve(d2.draft_id, HUMAN)
+    assert out2.status is DraftStatus.APPROVED
+
+    # Reopen the db via a fresh connection and confirm ONLY d2's approval
+    # (and its audit entry) is durable.
+    verifier = connect(db)
+
+    row1 = verifier.execute("SELECT status FROM drafts WHERE draft_id=?", (d1.draft_id,)).fetchone()
+    assert row1["status"] == DraftStatus.PENDING_REVIEW.value, (
+        "the failed approve's state write must not have been swept into "
+        "d2's later successful commit"
+    )
+
+    row2 = verifier.execute("SELECT status FROM drafts WHERE draft_id=?", (d2.draft_id,)).fetchone()
+    assert row2["status"] == DraftStatus.APPROVED.value
+
+    d1_approve_entries = verifier.execute(
+        "SELECT * FROM audit_log WHERE target_id=? AND action='draft.approve'", (d1.draft_id,)
+    ).fetchall()
+    assert d1_approve_entries == [], "no audit entry should exist for the failed first attempt"
+
+    d2_approve_entries = verifier.execute(
+        "SELECT * FROM audit_log WHERE target_id=? AND action='draft.approve'", (d2.draft_id,)
+    ).fetchall()
+    assert len(d2_approve_entries) == 1

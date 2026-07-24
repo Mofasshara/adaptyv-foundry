@@ -32,6 +32,14 @@ What this does NOT catch on its own:
     against a motivated insider with DB access. A signed/HMAC'd head
     checkpoint (published or witnessed outside the writer's control) is the
     natural next step if that threat model matters.
+
+Atomicity contract with ApprovalStore: `record()` below issues the single
+`commit()` that durably lands both the caller's preceding state-table write
+and this audit row together (see adaptyv/governance/approval.py's
+`_mutate_and_record`). Callers must never catch/swallow an exception from
+`record()` without rolling back the connection first — otherwise a later,
+unrelated successful `record()` call on the same connection will sweep the
+earlier failed write into its own commit with no matching audit entry.
 """
 
 from __future__ import annotations

@@ -47,6 +47,19 @@ class MockTransport:
             m = re.fullmatch(rf"/api/v1/{kind}s/([^/]+)", path)
             if method == "GET" and m:
                 return self._detail(coll, m.group(1), kind=kind)
+        if method == "POST" and path == "/api/v1/experiments":
+            return {"experiment_id": "99999999-9999-9999-9999-999999999999"}
+        m = re.fullmatch(r"/api/v1/experiments/([^/]+)/submit", path)
+        if method == "POST" and m:
+            return {"experiment_id": m.group(1), "status": "quote_sent"}
+        if method == "POST" and path == "/api/v1/experiments/cost-estimate":
+            return {"breakdown": {"total_usd": 4200}, "warnings": []}
+        if method == "POST" and path == "/api/v1/sequences":
+            body = json or {}
+            return {"experiment_id": "11111111-1111-1111-1111-111111111111",
+                    "experiment_code": body.get("experiment_code", "EXP-1001"),
+                    "added_count": len(body.get("sequences", [])),
+                    "sequence_ids": ["33333333-0000-0000-0000-0000000000aa"]}
         raise NotFoundError(f"MockTransport has no route for {method} {path}", status_code=404)
 
     def _detail(self, items, item_id, *, full=None, kind="item"):

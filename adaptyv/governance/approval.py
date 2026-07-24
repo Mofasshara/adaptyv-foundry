@@ -5,9 +5,9 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-from adaptyv.errors import (DraftNotFoundError, InvalidTransitionError, SelfApprovalError)
+from adaptyv.errors import (AnomalyNotAcknowledgedError, DraftNotFoundError, InvalidTransitionError, SelfApprovalError)
 from adaptyv.governance.audit import AuditLog
-from adaptyv.governance.models import (Actor, ActorKind, AnomalyFinding, Draft, DraftStatus)
+from adaptyv.governance.models import (Actor, ActorKind, AnomalyFinding, Draft, DraftStatus, has_unacknowledged_critical)
 
 
 class ApprovalStore:
@@ -61,6 +61,9 @@ class ApprovalStore:
         draft = self.get(draft_id)
         self._require_human(reviewer)
         self._require_status(draft, DraftStatus.PENDING_REVIEW)
+        if has_unacknowledged_critical(draft):
+            raise AnomalyNotAcknowledgedError(
+                f"draft {draft_id} has an unacknowledged critical anomaly; acknowledge before approving")
         self._set_review(draft_id, DraftStatus.APPROVED, reviewer, None)
         self._audit.record(reviewer, "draft.approve", "draft", draft_id, "approved")
         return self.get(draft_id)
@@ -80,6 +83,16 @@ class ApprovalStore:
                            (DraftStatus.SENT.value, draft_id))
         self._conn.commit()
         self._audit.record(actor, "draft.send", "draft", draft_id, "sent")
+        return self.get(draft_id)
+
+    def acknowledge_anomaly(self, draft_id: str, reviewer: Actor) -> Draft:
+        self.get(draft_id)  # raises DraftNotFoundError if missing
+        self._require_human(reviewer)
+        self._conn.execute(
+            "UPDATE drafts SET anomalies_acknowledged=1, acknowledged_by=? WHERE draft_id=?",
+            (json.dumps(reviewer.model_dump(mode="json")), draft_id))
+        self._conn.commit()
+        self._audit.record(reviewer, "anomaly.acknowledge", "draft", draft_id, "acknowledged")
         return self.get(draft_id)
 
     # -- helpers --

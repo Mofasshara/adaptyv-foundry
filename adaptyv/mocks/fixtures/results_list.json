@@ -12,5 +12,31 @@
      {"result_type": "affinity", "sequence": {"aa_string": "CTRLP", "name": "pos-control"},
       "kd_units": "M", "binding_strength": "strong", "positive_control": true,
       "performance": {"verdict": "pass"}, "kd_mean": 2.0e-9, "replicates": [{"replicate": 1, "kd": 2.0e-9}]}
+   ]},
+  {"id": "aaaaaaaa-0000-0000-0000-000000000002", "title": "Affinity results — All-sequences-failed panel",
+   "experiment_id": "33333333-3333-3333-3333-333333333333", "result_type": "affinity",
+   "created_at": "2026-07-18T12:00:00Z", "metadata": {},
+   "summary": [
+     {"result_type": "affinity", "sequence": {"aa_string": "MKCC", "name": "binder-3"},
+      "kd_units": "M", "binding_strength": "none", "positive_control": false,
+      "performance": {"verdict": "fail"}, "kd_mean": null,
+      "replicates": [{"replicate": 1, "expression": "none"}, {"replicate": 2, "expression": "none"}]},
+     {"result_type": "affinity", "sequence": {"aa_string": "MKDD", "name": "binder-4"},
+      "kd_units": "M", "binding_strength": "none", "positive_control": false,
+      "performance": {"verdict": "fail"}, "kd_mean": null,
+      "replicates": [{"replicate": 1, "expression": "none"}, {"replicate": 2, "expression": "none"}]}
+   ]},
+  {"id": "aaaaaaaa-0000-0000-0000-000000000003", "title": "Affinity results — Control-out-of-range panel",
+   "experiment_id": "44444444-4444-4444-4444-444444444444", "result_type": "affinity",
+   "created_at": "2026-07-19T12:00:00Z", "metadata": {},
+   "summary": [
+     {"result_type": "affinity", "sequence": {"aa_string": "MKEE", "name": "binder-5"},
+      "kd_units": "M", "binding_strength": "strong", "positive_control": false,
+      "performance": {"verdict": "pass"}, "kd_mean": 1.5e-9,
+      "replicates": [{"replicate": 1, "kd": 1.4e-9}, {"replicate": 2, "kd": 1.6e-9}]},
+     {"result_type": "affinity", "sequence": {"aa_string": "CTRLQ", "name": "pos-control"},
+      "kd_units": "M", "binding_strength": "weak", "positive_control": true,
+      "performance": {"verdict": "out_of_range"}, "kd_mean": 1e-3,
+      "replicates": [{"replicate": 1, "kd": 1e-3}, {"replicate": 2, "kd": 1.1e-3}]}
    ]}
-], "total": 1, "count": 1, "offset": 0}
+], "total": 3, "count": 3, "offset": 0}

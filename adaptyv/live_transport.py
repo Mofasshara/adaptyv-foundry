@@ -39,12 +39,29 @@ class LiveTransport:
         for i in range(attempts):
             resp = self._http.request(method, url, params=params, json=json, headers=headers)
             if resp.status_code in _RETRY and i < attempts - 1:
-                self._sleep(float(resp.headers.get("Retry-After", 0.2 * (i + 1))))
+                default_delay = 0.2 * (i + 1)
+                retry_after = resp.headers.get("Retry-After")
+                try:
+                    delay = float(retry_after) if retry_after is not None else default_delay
+                except ValueError:
+                    # Retry-After may be an HTTP-date instead of a delta-seconds value;
+                    # fall back to the default backoff rather than crashing.
+                    delay = default_delay
+                self._sleep(delay)
                 continue
             if resp.status_code >= 400:
                 raise _to_error(resp)
             return resp.json() if resp.content else None
         raise TransportError("request failed after retries")
+
+    def close(self) -> None:
+        self._http.close()
+
+    def __enter__(self) -> "LiveTransport":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
 
 
 def _to_error(resp: httpx.Response):

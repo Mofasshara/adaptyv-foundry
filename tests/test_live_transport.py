@@ -1,7 +1,7 @@
 import httpx
 import pytest
 import respx
-from adaptyv.errors import AuthError, NotFoundError, ValidationError
+from adaptyv.errors import AuthError, NotFoundError, TransportError
 from adaptyv.live_transport import LiveTransport
 
 BASE = "https://devs.adaptyvbio.com"
@@ -53,7 +53,7 @@ def test_post_is_not_retried():
     route = respx.post(f"{BASE}/api/v1/experiments").mock(
         return_value=httpx.Response(503, json={"error": "down", "request_id": "x"})
     )
-    with pytest.raises(Exception):
+    with pytest.raises(TransportError):
         _lt(max_retries=2).request("POST", "/api/v1/experiments", json={})
     assert route.call_count == 1
 
@@ -61,3 +61,32 @@ def test_post_is_not_retried():
 def test_missing_key_raises_auth():
     with pytest.raises(AuthError):
         LiveTransport(base_url=BASE, api_key=None).request("GET", "/api/v1/experiments")
+
+
+@respx.mock
+def test_retries_get_on_non_numeric_retry_after_then_succeeds():
+    sleeps: list[float] = []
+    route = respx.get(f"{BASE}/api/v1/results").mock(
+        side_effect=[
+            httpx.Response(
+                429,
+                headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"},
+                json={"error": "slow", "request_id": "x"},
+            ),
+            httpx.Response(200, json={"items": [], "total": 0, "count": 0, "offset": 0}),
+        ]
+    )
+    lt = LiveTransport(base_url=BASE, api_key="secret", sleep=sleeps.append, max_retries=2)
+    lt.request("GET", "/api/v1/results")
+    assert route.call_count == 2
+    assert sleeps == [0.2]
+
+
+def test_close_and_context_manager_close_underlying_client():
+    lt = _lt()
+    lt.close()
+    assert lt._http.is_closed
+
+    with _lt() as ctx_lt:
+        assert not ctx_lt._http.is_closed
+    assert ctx_lt._http.is_closed

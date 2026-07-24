@@ -16,6 +16,7 @@ class Watcher:
         self._drafter = drafter
         self._store = approval_store
         self._conn = conn
+        self.errors: list[tuple[str, str, Exception]] = []
         conn.execute(
             "CREATE TABLE IF NOT EXISTS watcher_processed (key TEXT PRIMARY KEY, draft_id TEXT NOT NULL)"
         )
@@ -30,11 +31,16 @@ class Watcher:
                 key = f"{experiment_id}:{result.id}:{self._drafter.model}"
                 if self._already_processed(key):
                     continue
-                findings = self._detector.detect(result)
-                email = self._drafter.draft(result, findings)
-                draft = self._store.create_draft(
-                    experiment_id, email.body, result_id=result.id, anomalies=findings,
-                    created_by=Actor(kind="agent", id="watcher"))
+                try:
+                    findings = self._detector.detect(result)
+                    email = self._drafter.draft(result, findings)
+                    body = f"Subject: {email.subject}\n\n{email.body}"
+                    draft = self._store.create_draft(
+                        experiment_id, body, result_id=result.id, anomalies=findings,
+                        created_by=Actor(kind="agent", id="watcher"))
+                except Exception as exc:  # noqa: BLE001 - isolate one bad result, keep the batch alive
+                    self.errors.append((experiment_id, result.id, exc))
+                    continue
                 self._mark_processed(key, draft.draft_id)
                 created.append(draft)
         return created

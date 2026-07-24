@@ -27,12 +27,25 @@ def _slug(name: str) -> str:
 
 
 def build_fact_sheet(result: ResultInfo) -> dict[str, str]:
-    """Pure. One entry per non-null kd_mean — the only numbers the drafter may cite."""
+    """Pure. One entry per non-null kd_mean — the only numbers the drafter may cite.
+
+    Labels are derived from sequence name (or an aa_string prefix), which can
+    collide across summary entries. On collision the first occurrence keeps
+    the bare key; subsequent collisions are disambiguated with a numeric
+    suffix (_2, _3, ...) so every measured kd_mean still gets a unique,
+    correctly-attributed fact_id instead of silently overwriting an earlier one.
+    """
     facts: dict[str, str] = {}
     for s in result.summary:
         if isinstance(s, AffinityResultSummary) and s.kd_mean is not None:
             label = _slug(s.sequence.name or s.sequence.aa_string[:8])
-            facts[f"kd_mean_{label}"] = f"{s.kd_mean:.2e} {s.kd_units}"
+            key = f"kd_mean_{label}"
+            if key in facts:
+                suffix = 2
+                while f"{key}_{suffix}" in facts:
+                    suffix += 1
+                key = f"{key}_{suffix}"
+            facts[key] = f"{s.kd_mean:.2e} {s.kd_units}"
     return facts
 
 

@@ -23,6 +23,34 @@ def test_build_fact_sheet_has_kd_mean_entry():
     assert facts["kd_mean_binder-1"] == "1.20e-09 M"
 
 
+def _result_with_duplicate_labels():
+    # Two summary entries sharing the same name -> same derived label. Without
+    # disambiguation the second kd_mean silently overwrites the first under
+    # "kd_mean_dup-binder", misattributing whichever value survives.
+    return ResultInfo.model_validate({
+        "id": "r2", "title": "Affinity results (dup labels)", "experiment_id": "e1",
+        "result_type": "affinity", "created_at": "2026-07-20T10:00:00Z", "metadata": {},
+        "summary": [
+            {"result_type": "affinity", "sequence": {"aa_string": "MKAA", "name": "dup-binder"},
+             "kd_units": "M", "binding_strength": "strong", "positive_control": False,
+             "performance": {"verdict": "pass"}, "kd_mean": 1.2e-9, "replicates": []},
+            {"result_type": "affinity", "sequence": {"aa_string": "MKZZ", "name": "dup-binder"},
+             "kd_units": "M", "binding_strength": "weak", "positive_control": False,
+             "performance": {"verdict": "pass"}, "kd_mean": 9.9e-6, "replicates": []},
+        ]})
+
+
+def test_build_fact_sheet_disambiguates_duplicate_labels():
+    facts = build_fact_sheet(_result_with_duplicate_labels())
+    # Both measurements must be present, under two DISTINCT keys.
+    assert "kd_mean_dup-binder" in facts
+    assert "kd_mean_dup-binder_2" in facts
+    assert len(facts) == 2
+    # And correctly attributed -- not swapped.
+    assert facts["kd_mean_dup-binder"] == "1.20e-09 M"
+    assert facts["kd_mean_dup-binder_2"] == "9.90e-06 M"
+
+
 def test_substitute_facts_replaces_token():
     out = substitute_facts("Kd was {{kd_mean_binder-1}}.", {"kd_mean_binder-1": "1.20e-09 M"})
     assert out == "Kd was 1.20e-09 M."

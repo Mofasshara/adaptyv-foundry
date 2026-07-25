@@ -2,7 +2,10 @@
 
 > A living explainer for every concept, tool, and decision in this project.
 > Written in two layers: plain-English analogy first, technical mechanism second.
-> Updated as we build. Last updated: 2026-07-24 (pre-implementation; based on the approved design).
+> Updated as we build. Last updated: 2026-07-26 (post-implementation — reflects
+> what was actually built across 5 phases and 3 rounds of external review, not
+> the original pre-implementation design; see `ROADMAP.md`'s Change Log for
+> every place the two diverge and why).
 
 ---
 
@@ -87,21 +90,21 @@ Alternative considered: a separate fake HTTP server process. Rejected as heavier
 **Key things to know**
 - This "swap the implementation behind a shared interface" idea is the **dependency-inversion / adapter pattern** — the single most reused trick in the whole project (it reappears in the audit store and the judge).
 
-### TestPyPI packaging — shipping the toolkit honestly
+### Packaging — shipping the toolkit honestly
 
 **What it is**
-Packaging turns our folder of code into an installable product (`pip install ...`). **TestPyPI** is the *dress-rehearsal* version of the public Python package registry.
+Packaging turns our folder of code into an installable product (`pip install ...`). `pyproject.toml` already declares everything needed: package name (`adaptyv-foundry-sdk`, deliberately not `adaptyvbio` — see below), version, dependencies, and the `adaptyv` CLI entry point, built with `hatchling`.
 
 **The problem it solves**
-"It works on my machine" isn't a deliverable. A reviewer needs to install it like a real library. But publishing to the *real* registry under the name `adaptyvbio` would be squatting a brand that belongs to the company we're interviewing with.
+"It works on my machine" isn't a deliverable. A reviewer needs to install it the same way they'd install any real library (`pip install -e ".[dev]"`), not clone-and-hope.
 
 **How it works**
 1. `pyproject.toml` declares the package name, version, dependencies, and CLI entry point.
-2. We publish to TestPyPI under a clearly-unofficial name (`adaptyv-foundry-sdk`).
-3. The README shows the aspirational `pip install adaptyvbio` command with an honest note about the demo namespace.
+2. `pip install -e .` (editable install) is enough to make the `adaptyv` command and the `adaptyv` package importable — this is what the README's quickstart actually uses and what was verified before writing it.
+3. Publishing to **TestPyPI** (the dress-rehearsal version of the real Python package registry) is the natural next step for making the package installable by a stranger with no local checkout at all — labeled a stretch goal, not attempted in this build, since publishing anything (even to a test registry) is an action with an external, visible side effect that should be a deliberate choice, not something done by default.
 
 **Why we chose it for this project**
-Real-PyPI publish was rejected on reputational grounds (brand squatting); a purely-local package was rejected as less convincing. TestPyPI is the honest middle: really installable, no land-grab.
+Publishing under the real name `adaptyvbio` on the real PyPI registry was rejected outright — that would be squatting a brand that belongs to the company being interviewed with. A local editable install is the honest, no-side-effects baseline; TestPyPI publication remains available as a follow-up if wanted.
 
 ---
 
@@ -180,24 +183,69 @@ Alternative considered: LLM-based anomaly detection. Rejected for the *gate* (no
 **Key things to know**
 - Rules and thresholds live in one place so a scientist could tune them without touching agent logic.
 
-### EmailDrafter with placeholder substitution — the ghostwriter who leaves blanks
+### EmailDrafter with deny-by-default substitution — the ghostwriter who leaves blanks, watched by a bouncer
 
 **What it is**
-The drafter is a **ghostwriter who writes with numbered blanks.** Claude writes the friendly prose but, instead of typing figures, it leaves typed placeholders (like `{{kd_mean_binder1}}`); the agent then fills each blank with the exact validated number from the real results. The model shapes the sentences; it never sources the figures itself.
+The drafter is a **ghostwriter who writes with numbered blanks, checked by a bouncer who rejects anyone who tries to sneak a number past the door list.** Claude writes the friendly prose but, instead of typing figures, it leaves typed placeholders (opaque ones like `{{kd_1}}`, not name-derived); the agent fills each blank with the exact validated number from the real results. Separately — and this is the part that took three attempts to get right — **any digit that appears anywhere outside a placeholder is rejected outright**, before the agent even tries to substitute anything. The model never sources a figure itself, and it can't sneak one in as plain prose either.
 
 **The problem it solves**
-LLMs can "hallucinate" plausible-but-wrong numbers. Emailing a customer a made-up binding affinity would be a serious error. The placeholder-substitution approach makes it very hard for a wrong number to slip through — and a deterministic guard rejects any unresolved or unknown placeholder — though it is a strong safeguard, not an absolute mathematical guarantee, which is why the eval guard backs it up.
+LLMs can "hallucinate" plausible-but-wrong numbers. Emailing a customer a made-up binding affinity would be a serious error. The first two attempts at this guard were themselves not fully correct — see "Deny-by-default vs. detection" below for exactly what was wrong and why the current version is different in kind, not just in degree.
 
 **How it works**
-1. The agent extracts the exact figures and anomaly findings, each under a typed placeholder id.
-2. Claude receives the available placeholder ids and a tone instruction, and returns prose containing placeholders (not raw numbers).
-3. The agent substitutes each placeholder with its validated numeric string; a guard rejects any unresolved or unknown placeholder — belt and braces.
+1. The agent extracts the exact figures under opaque placeholder ids (`kd_1`, `kd_2`, ...) — a plain counter, not derived from sequence names, so there's nothing for two entries to collide over.
+2. Anomaly findings (which legitimately contain numbers the drafter is told to echo verbatim, like "0 replicates, policy requires 2") are *also* rewritten with their own numbers replaced by placeholders before the prompt is ever built — so "copy this text exactly" can never reintroduce a raw number.
+3. Claude receives the available placeholder ids and a tone instruction, and returns prose that should only reference figures via `{{token}}`.
+4. Before substituting anything, the agent strips out every well-formed placeholder and checks whether any digit remains in what's left. If one does — a number typed directly as prose — the whole draft is rejected, no exceptions, even if that number happens to be correct.
+5. After substitution, any leftover `{` or `}` character (an empty, unclosed, or malformed placeholder) is also rejected.
 
 **Why we chose it for this project**
 Alternative considered: let the model read raw results and summarize freely. Rejected — that's exactly where hallucinations enter. What we gave up: a little fluency/flexibility, for correctness we can prove.
 
 **Key things to know**
-- Model IDs and parameters are confirmed via the `claude-api` reference at build time, not guessed. Default lean: a current Sonnet-class model for drafting, a strong model for judging.
+- Model IDs and parameters are confirmed via the `claude-api` reference at build time, not guessed.
+- The offline eval suite does **not** keep a second, separate implementation of this check — it runs the real `EmailDrafter.draft()` (against a deterministic fake client, so it stays free and offline) and treats any rejection as a failed test case. There is exactly one implementation of "no raw numbers get through," not two that could drift apart.
+
+### Deny-by-default vs. detection — the lesson three review rounds taught
+
+**What it is**
+Two different shapes a safety check can take. A **detection** check is a bouncer with a list of known troublemakers' faces — it stops everyone it recognizes, and lets through anyone it doesn't. A **deny-by-default (construction)** check is a bouncer with a guest list — nobody gets in unless their name is *on* the list, recognized or not.
+
+**The problem it solves**
+The first version of this project's number-guard was detection-based: a regex looking for placeholder-*shaped* text, and later a check asking "does this number appear somewhere in the known facts?" Both looked reasonable and both were wrong, in the same way: a detection rule can only catch the specific patterns its author thought to write down. An external review found the exact gap twice — a model that typed a *correct* number as plain prose (no placeholder at all) sailed straight through the "is this number grounded" check, because the check only asked "does a matching number exist somewhere," not "did this number actually come through the verified path."
+
+**How it works**
+```
+Detection (round 1 & 2):  is this thing on my list of bad things?  → miss anything not on the list
+Construction (final):     did this thing come through my one allowed path?  → nothing else can get through
+```
+Concretely: instead of asking "is this number one I recognize as a real fact" (detection), the final version asks "did this number arrive via a `{{fact_id}}` token I resolved myself" (construction) — and rejects every other digit, regardless of whether it happens to be numerically correct.
+
+**Why we chose it for this project**
+This is a general pattern worth recognizing anywhere a guarantee is being enforced against a generative model's output (prompt-injection filtering, PII redaction, content moderation) — not specific to email drafting. Detection-based checks feel productive because they visibly catch real examples during testing, which is exactly what makes them dangerous: they pass code review and still have gaps, because "did we enumerate every bad pattern" is unanswerable in the general case. Construction-based checks are less flexible to write (they require redesigning *how* the allowed content is produced, not just adding a filter afterward) but close the whole class of problem at once instead of one instance at a time.
+
+**Key things to know**
+- The tell that a check is detection-based, in code: it's built as "scan the output for X, reject if found" rather than "the output can only contain X because of how it was assembled."
+- If a review finds a second instance of the same class of bug in something you already "fixed" once, that's the signal to stop patching and ask whether the design is detection or construction — not to write a third patch.
+
+### Idempotency — the "did I already do this" check
+
+**What it is**
+Idempotency is **a hotel check-in desk that remembers who already has a room key.** If the same guest tries to check in twice — because they forgot they already did, or the front desk's computer crashed mid-check-in and they're trying again — the desk recognizes them and doesn't hand out a second room.
+
+**The problem it solves**
+The Watcher polls for finished results and drafts an email for each one. If it's run twice — a scheduled retry, a restart after a crash, a second `adaptyv watch --once` — a naive implementation would draft (and eventually send) the *same* customer update twice. Worse, a crash at exactly the wrong moment (draft written, but the "already handled" marker not yet saved) could silently produce a duplicate on the very next run.
+
+**How it works**
+1. Every result gets a durable key: `experiment_id:result_id:drafter_model`, stored in a `watcher_processed` sqlite table.
+2. Before drafting anything, the Watcher checks whether that key already has a row. If it does, the result is skipped — already handled.
+3. The tricky part: the marker write has to happen in the **same database transaction** as the draft and its audit entry, not as a separate step afterward — otherwise a crash between "draft saved" and "marker saved" leaves a draft with no marker, and the next run duplicates it. This project's real history: an earlier version wrote the marker as a separate, later commit, outside the code path that isolates a single result's failure from crashing the whole batch — a review caught both problems (non-atomic write, and a failure there could crash every other result too) and fixed them together with one change: the marker write became a hook invoked *inside* the same transaction as the draft, so all three writes commit — or roll back — as one unit.
+
+**Why we chose it for this project**
+A polling agent that isn't idempotent is unsafe to actually run on a schedule or retry after any failure — which defeats the point of "autonomous." The durable-key-in-the-same-transaction approach was chosen over "just don't crash" (unrealistic) or "de-duplicate on the receiving end" (there is no receiving end to de-duplicate against — the email really would go out twice).
+
+**Key things to know**
+- "Idempotent" doesn't mean "can't fail" — it means "failing and retrying produces the same end state as succeeding once." That's a much easier, much more achievable bar.
+- The same pattern — a durable key, written atomically with the thing it protects — is worth reaching for anywhere a process might restart, retry, or run twice: webhook handlers, payment processing, scheduled jobs.
 
 ---
 
@@ -251,24 +299,26 @@ Two alternatives were considered. (1) An *auto-spawned FastAPI sidecar* — a lo
 
 *Its job: prove the output is good, and make it get better over time.*
 
-### LLM-as-judge evals — the second marker
+### Deterministic-guard evals — the checklist inspector, not a second marker
 
 **What it is**
-A judge is **a second, independent examiner** — a separate LLM whose only job is to score the drafted email against a rubric (accuracy, completeness, tone), the way a second marker grades an essay against criteria.
+The eval suite is a **checklist inspector**, not a second examiner: it runs the real drafting pipeline against a set of known results and mechanically checks hard rules — not a subjective read of tone or fluency.
 
 **The problem it solves**
-"The email looks fine" is not a quality guarantee, and quality can silently regress when we tweak a prompt. Evals turn "looks fine" into a measurable score with a pass threshold, so regressions fail loudly.
+"The email looks fine" is not a quality guarantee, and a code or prompt change could silently reintroduce a defect (a leftover placeholder, an ungrounded number, a hard-block that stopped blocking). `make eval` turns "looks fine" into a pass/fail check that fails loudly, immediately, and for free — no API key, no cost, no network call.
 
 **How it works**
-1. A **golden set** pairs example results with the facts a good email must contain.
-2. **Deterministic guards** check the hard rules (no number appears that isn't in the source data; critical anomalies are flagged).
-3. The **LLM judge** scores the softer qualities (tone, completeness) against a plain-English rubric; scores below threshold fail.
+1. A **golden set** (`evals/golden_set.py`) pairs real mock-fixture experiments with the exact facts and critical-anomaly rules a correct run over them must produce.
+2. `evals/run_eval.py` runs the *real* `EmailDrafter.draft()` against those experiments, using a deterministic fake Anthropic client (`evals/fake_llm.py`) so the real substitution/rejection logic is genuinely exercised with zero network calls.
+3. Remaining guards (`evals/guards.py`) check what the draft pipeline can't check about itself: does the detected critical-anomaly set match what's expected, are the expected fact keys present, does a critical anomaly genuinely hard-block approval when it's supposed to.
+4. A **human-feedback flywheel** (`evals/flywheel.py`) promotes real corrected/rejected drafts into new golden-set cases, so an actual mistake a reviewer caught becomes a permanent regression test.
 
 **Why we chose it for this project**
-Alternatives considered: DeepEval (heavier framework) and promptfoo (YAML/CLI). We hand-roll a lightweight judge instead — transparent, dependency-light, and visibly our own work, which matters when the reviewers are the team who'll maintain it. What we gave up: some off-the-shelf metric breadth.
+A rubric-scored **LLM-as-judge** tier (a second model scoring tone/completeness against a plain-English rubric) was considered and scoped as an explicit stretch goal — deliberately **not built**, because it requires live, costed Anthropic API calls on every eval run, which shouldn't happen by default in a suite that's otherwise free and instant. The deterministic-only suite is the honest, always-on gate; an LLM judge remains a documented, available follow-up, not a silently-dropped promise.
 
 **Key things to know**
-- Deterministic guards are the *primary* gate (cheap, reliable); the LLM judge covers what rules can't (does this *read* like a professional update?).
+- Deterministic guards are the *only* gate here, not a warm-up act for a judge — there is no soft, subjective scoring layer in this build.
+- The eval suite deliberately does not duplicate `EmailDrafter`'s own hallucination-prevention checks (see "Deny-by-default vs. detection" above) — it runs the real code and treats any exception as a failed case, so there's exactly one implementation of that guarantee, not two that could drift.
 
 ### The three feedback loops — loop engineering
 
@@ -316,20 +366,23 @@ The elegant part: the flywheel *reuses components we already built for other rea
 - **Hallucination** — an LLM confidently producing false information (e.g. a made-up number).
 - **Fact injection** — giving the model exact figures so it never sources numbers itself.
 - **Eval / golden set** — a scored test of output quality against known-good expectations.
-- **LLM-as-judge** — using a separate LLM to score another LLM's output against a rubric.
+- **LLM-as-judge** — using a separate LLM to score another LLM's output against a rubric; considered for this project, deliberately not built (costed, non-deterministic; see Part 5).
 - **Feedback loop / flywheel** — a cycle where usage and review feed back to improve the system.
-- **TestPyPI** — the dress-rehearsal version of the public Python package registry.
+- **TestPyPI** — the dress-rehearsal version of the public Python package registry; a follow-up option here, not yet done.
+- **Deny-by-default / construction check** — a safety rule that blocks everything except what came through one verified path, vs. a **detection check** that blocks only recognized bad patterns.
+- **Idempotency** — the property that retrying an operation produces the same end state as running it once, via a durable key checked (and written) atomically with the operation it protects.
+- **Opaque ID** — an identifier that carries no information about its source (a plain counter, e.g. `kd_1`), chosen specifically so there's nothing about it that could collide or leak.
 
 ---
 
 ## How to explain this in an interview
 
 **60-second version (corridor):**
-"It takes Adaptyv's lab — which today mostly only engineers can drive — and makes it usable by talking to Claude. I built a clean Python SDK over the Foundry API, wrapped it in a TypeScript MCP server so anyone can run experiments and pull results in plain English, and added an agent that drafts the customer result email automatically. Crucially it never sends unreviewed — there's a human sign-off gate, a tamper-evident audit log, and an eval suite that scores the drafts, so it's automation the team can actually trust."
+"It takes Adaptyv's lab — which today mostly only engineers can drive — and makes it usable by talking to Claude. I built a clean Python SDK over the Foundry API, wrapped it in a TypeScript MCP server so anyone can run experiments and pull results in plain English, and added an agent that drafts the customer result email automatically. Crucially it never sends unreviewed — there's a human sign-off gate, a tamper-evident audit log, and a deterministic eval suite that fails loudly if a code change reintroduces a defect, so it's automation the team can actually trust."
 
 **Technical version (senior engineer):**
-"The Python SDK is the single source of truth — hand-written httpx + pydantic v2 modelled from the *raw* OpenAPI spec (discriminated result unions, a pagination envelope, list-vs-detail models), with a Transport protocol so `mock=True` swaps in fixture-backed responses, and a contract test that validates fixtures against the pinned OpenAPI JSON Schema. The TypeScript MCP doesn't re-implement HTTP — it delegates to the SDK via a subprocess JSON bridge (`python -m adaptyv --json`), so logic lives in one place with no server lifecycle to manage. Tools are task-shaped, not 1:1 CRUD. The ExperimentWatcher splits detection (a deterministic, policy-driven rule engine, so the safety gate is explainable) from description (Claude writes prose with typed placeholders that the agent substitutes with validated numbers, so figures can't be invented). Governance is an append-only SQLite audit log (hash-chained in the stretch tier) plus an approval state machine where the agent can't self-approve and critical anomalies hard-block. Quality is deterministic guards as the CI gate, with an LLM-judge and feedback flywheel as reported/stretch layers."
+"The Python SDK is the single source of truth — hand-written httpx + pydantic v2 modelled from the *raw* OpenAPI spec (discriminated result unions, a pagination envelope, a model validator enforcing the real create-experiment assay matrix), with a Transport protocol so `mock=True` swaps in fixture-backed responses, and a contract test that validates fixtures against the pinned OpenAPI JSON Schema. The TypeScript MCP doesn't re-implement HTTP — it delegates to the SDK via a subprocess JSON bridge (`python -m adaptyv --json`), so logic lives in one place with no server lifecycle to manage. Tools are task-shaped, not 1:1 CRUD. The ExperimentWatcher splits detection (a deterministic, policy-driven rule engine, so the safety gate is explainable) from description (Claude writes prose with opaque placeholders; the drafter rejects any raw digit that didn't come through a resolved placeholder — deny-by-default, not a pattern-matching filter). Governance is a hash-chained, append-only SQLite audit log plus an approval state machine where the agent can't self-approve and critical anomalies hard-block, with the idempotency marker committed atomically with the draft and its audit entry. Quality is deterministic guards as the sole CI gate — no LLM-judge tier, by design, since that would need live costed API calls in a suite that should otherwise be free and instant — plus a human-feedback flywheel and an autonomous watch loop. This went through three rounds of external review; the most interesting fix wasn't a bug, it was redesigning the hallucination guard from a detection check (does this number match something I recognize) to a construction check (did this number come through the one verified path) after the detection version kept having gaps."
 
 **Business version (executive / regulator):**
-"We made an existing capability — the lab's ordering and results system — usable by the whole company through normal conversation, and we automated the drafting of customer result emails. We built in the controls a regulated business needs: a person must approve every customer email, the system blocks anything with a serious data problem until a human signs off, and every action is recorded in a logbook that can't be quietly altered. We only store the minimum sensitive data, and we continuously grade the AI's output so we'd know immediately if quality slipped. The result is faster customer communication with accountability built in, not bolted on."
+"We made an existing capability — the lab's ordering and results system — usable by the whole company through normal conversation, and we automated the drafting of customer result emails. We built in the controls a regulated business needs: a person must approve every customer email, the system blocks anything with a serious data problem until a human signs off, and every action is recorded in a logbook that can't be quietly altered. We only store the minimum sensitive data, and we mechanically check the AI's output against hard rules on every change, so we'd know immediately if a bug let something wrong through. The result is faster customer communication with accountability built in, not bolted on."
 ```

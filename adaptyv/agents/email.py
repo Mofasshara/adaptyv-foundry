@@ -14,7 +14,8 @@ EMAIL_DRAFT_MODEL = "claude-opus-4-8"
 # contain hyphens (e.g. "binder-1") -- \w alone would silently fail to match those
 # tokens, letting an un-substituted {{...}} slip through unresolved-placeholder
 # detection entirely. Include '-' explicitly so every emitted token is checked.
-_PLACEHOLDER = re.compile(r"\{\{([\w-]+)\}\}")
+_PLACEHOLDER = re.compile(r"\{\{(.+?)\}\}")
+_VALID_FACT_ID = re.compile(r"^[\w-]+$")
 
 
 class EmailDraftSchema(BaseModel):
@@ -52,7 +53,7 @@ def build_fact_sheet(result: ResultInfo) -> dict[str, str]:
 def substitute_facts(body: str, fact_sheet: dict[str, str]) -> str:
     def _replace(m: re.Match) -> str:
         fact_id = m.group(1)
-        if fact_id not in fact_sheet:
+        if not _VALID_FACT_ID.match(fact_id) or fact_id not in fact_sheet:
             raise UnresolvedPlaceholderError(
                 f"drafter emitted unknown placeholder '{{{{{fact_id}}}}}' — not in the fact sheet")
         return fact_sheet[fact_id]
@@ -89,5 +90,6 @@ class EmailDrafter:
             output_format=EmailDraftSchema,
         )
         draft = response.parsed_output
+        resolved_subject = substitute_facts(draft.subject, fact_sheet)
         resolved_body = substitute_facts(draft.body, fact_sheet)
-        return EmailDraftSchema(subject=draft.subject, body=resolved_body)
+        return EmailDraftSchema(subject=resolved_subject, body=resolved_body)

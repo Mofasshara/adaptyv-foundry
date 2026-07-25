@@ -96,3 +96,9 @@ def test_critical_draft_blocks_approval_is_safe_to_call_twice_on_mismatch():
 
     second = guard_critical_draft_blocks_approval(store, draft.draft_id, HUMAN, is_critical=True)
     assert second == []
+
+
+def test_guard_no_leftover_placeholder_syntax_catches_malformed_construct():
+    from evals.guards import guard_no_leftover_placeholder_syntax
+    violations = guard_no_leftover_placeholder_syntax("Kd was {{bad token}}.")
+    assert violations

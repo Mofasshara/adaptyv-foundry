@@ -51,7 +51,7 @@ def review_list(db: str = typer.Option("adaptyv_governance.db")):
     def _list():
         for d in _store(db).list():
             flag = "  ⚠CRITICAL" if has_unacknowledged_critical(d) else ""
-            typer.echo(f"{d.draft_id[:8]}  {d.status.value:14} {d.experiment_id}{flag}")
+            typer.echo(f"{d.draft_id}  {d.status.value:14} {d.experiment_id}{flag}")
     _run(_list)
 
 @review.command("show")

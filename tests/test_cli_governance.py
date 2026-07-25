@@ -26,6 +26,12 @@ def test_review_list_and_blocked_then_ack_then_approve(tmp_path):
     r = runner.invoke(app, ["review", "list", "--db", db])
     assert r.exit_code == 0 and did[:8] in r.stdout and "pending_review" in r.stdout
 
+    # Regression: `review list` must print the FULL draft_id, not a truncated
+    # prefix -- review show/approve/reject/ack all require an exact match, so
+    # a truncated display id can never actually be pasted into a follow-up
+    # command.
+    assert did in r.stdout
+
     # approval blocked by critical anomaly
     r = runner.invoke(app, ["review", "approve", did, "--by", "alice", "--db", db])
     assert r.exit_code == 1 and "anomaly" in r.stdout.lower()

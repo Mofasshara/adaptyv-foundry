@@ -2,7 +2,7 @@ import pytest
 
 from adaptyv.agents.email import (EmailDrafter, EmailDraftSchema, build_fact_sheet,
                                   substitute_facts)
-from adaptyv.errors import UnresolvedPlaceholderError
+from adaptyv.errors import UngroundedNumberError, UnresolvedPlaceholderError
 from adaptyv.governance.models import AnomalyFinding
 from adaptyv.models import ResultInfo
 
@@ -160,3 +160,67 @@ def test_drafter_substitutes_placeholder_in_subject_when_valid():
     drafter = EmailDrafter(client=_FakeClient(fake_response))
     out = drafter.draft(_result(), findings=[])
     assert out.subject == "Kd result: 1.20e-09 M"
+
+
+def test_drafter_raises_on_raw_number_in_body_with_no_placeholder():
+    # Regression test: a raw number with NO {{}} syntax at all bypasses
+    # substitute_facts entirely -- this needs a separate grounding check.
+    fake_response = _FakeParseResponse(EmailDraftSchema(
+        subject="s", body="Model says Kd 9.99e-09 M"))
+    drafter = EmailDrafter(client=_FakeClient(fake_response))
+    with pytest.raises(UngroundedNumberError):
+        drafter.draft(_result(), findings=[])
+
+
+def test_drafter_raises_on_raw_number_in_subject_with_no_placeholder():
+    fake_response = _FakeParseResponse(EmailDraftSchema(subject="Results 42", body="no tokens here"))
+    drafter = EmailDrafter(client=_FakeClient(fake_response))
+    with pytest.raises(UngroundedNumberError):
+        drafter.draft(_result(), findings=[])
+
+
+def test_drafter_allows_a_number_that_appears_verbatim_in_anomaly_evidence():
+    # Anomaly evidence legitimately contains numbers (replicate counts, kd
+    # values) that the drafter is instructed to echo directly -- these must
+    # NOT be flagged as ungrounded. (AnomalyFinding is already imported at
+    # the top of this file.)
+    finding = AnomalyFinding(rule="missing_replicates", severity="warning",
+                             evidence="binder-1 has 0 replicate(s), policy requires 2")
+    fake_response = _FakeParseResponse(EmailDraftSchema(
+        subject="s", body="binder-1 has 0 replicate(s), policy requires 2"))
+    drafter = EmailDrafter(client=_FakeClient(fake_response))
+    out = drafter.draft(_result(), findings=[finding])  # must not raise
+    assert "0 replicate" in out.body
+
+
+def test_drafter_allows_a_number_that_matches_a_grounded_fact_via_placeholder():
+    # Existing behavior must still work: a real, grounded number substituted
+    # via {{fact_id}} is fine.
+    fake_response = _FakeParseResponse(EmailDraftSchema(
+        subject="s", body="Kd was {{kd_mean_binder-1}}."))
+    drafter = EmailDrafter(client=_FakeClient(fake_response))
+    out = drafter.draft(_result(), findings=[])  # must not raise
+    assert "1.20e-09" in out.body
+
+
+def test_drafter_does_not_misread_a_hyphenated_label_as_a_negative_number():
+    # Regression guard for the number regex: "binder-1" must NOT be parsed as
+    # the number "-1". A naive `-?\d+` would match the hyphen in a
+    # hyphenated sequence label as a negative sign, and "-1" is never in any
+    # fact sheet or evidence text -- a naive regex would incorrectly raise
+    # UngroundedNumberError on this completely benign, real sentence.
+    fake_response = _FakeParseResponse(EmailDraftSchema(
+        subject="s", body="Binder-1 showed strong binding with Kd {{kd_mean_binder-1}}."))
+    drafter = EmailDrafter(client=_FakeClient(fake_response))
+    out = drafter.draft(_result(), findings=[])  # must not raise
+    assert "Binder-1" in out.body
+
+
+def test_substitute_facts_raises_on_empty_placeholder():
+    with pytest.raises(UnresolvedPlaceholderError):
+        substitute_facts("Kd was {{}}.", {"kd_mean_binder-1": "1.20e-09 M"})
+
+
+def test_substitute_facts_raises_on_multiline_placeholder():
+    with pytest.raises(UnresolvedPlaceholderError):
+        substitute_facts("Kd was {{bad\ntoken}}.", {"kd_mean_binder-1": "1.20e-09 M"})

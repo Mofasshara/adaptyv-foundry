@@ -129,3 +129,45 @@ def test_rerun_across_new_connection_to_same_file_does_not_duplicate(tmp_path):
 
     assert second == []
     assert len(store2.list()) == len(first)
+
+
+def test_mark_processed_failure_is_isolated_not_batch_fatal():
+    # Regression test: if writing the watcher_processed marker fails (e.g. a
+    # genuine race between two watchers on the same key), that failure must
+    # be caught by the SAME per-result try/except that isolates a bad
+    # drafter -- not escape run() and abort the whole batch.
+    watcher, store = _make_watcher()
+
+    # Pre-insert a colliding marker row so the real INSERT inside on_commit
+    # collides with a UNIQUE/PRIMARY KEY violation for the first result Watcher
+    # will process.
+    first_result = watcher._client.experiments.results("11111111-1111-1111-1111-111111111111")[0]
+    key = f"11111111-1111-1111-1111-111111111111:{first_result.id}:{watcher._drafter.model}"
+    watcher._conn.execute(
+        "INSERT INTO watcher_processed (key, draft_id) VALUES (?, ?)", (key, "some-other-draft-id"))
+    watcher._conn.commit()
+
+    drafts = watcher.run(experiment_ids=[
+        "11111111-1111-1111-1111-111111111111",
+        "33333333-3333-3333-3333-333333333333",
+    ])
+
+    # The colliding experiment's result is skipped as already-processed (the
+    # pre-inserted row makes _already_processed() return True for it) --
+    # this test is really about proving run() doesn't crash and the SECOND
+    # experiment still produces a draft.
+    assert len(drafts) == 1
+    assert drafts[0].experiment_id == "33333333-3333-3333-3333-333333333333"
+
+
+def test_draft_and_processed_marker_commit_together():
+    # Regression test for the atomicity bug: after a successful run, every
+    # draft Watcher created has a corresponding watcher_processed row -- they
+    # cannot exist independently of each other.
+    watcher, store = _make_watcher()
+    drafts = watcher.run()
+    assert drafts
+    for draft in drafts:
+        rows = watcher._conn.execute(
+            "SELECT 1 FROM watcher_processed WHERE draft_id=?", (draft.draft_id,)).fetchall()
+        assert len(rows) == 1

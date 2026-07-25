@@ -134,3 +134,29 @@ def test_drafter_uses_configured_model_and_public_model_attribute():
     drafter.draft(_result(), findings=[])
 
     assert client.messages.calls[0]["model"] == "claude-custom-1"
+
+
+def test_substitute_facts_raises_on_malformed_placeholder_with_space():
+    # Regression test: a placeholder-shaped construct that ISN'T [\w-]+ (e.g.
+    # contains a space) must still be caught, not silently left in the output
+    # untouched and unraised.
+    with pytest.raises(UnresolvedPlaceholderError):
+        substitute_facts("Kd was {{bad token}}.", {"kd_mean_binder-1": "1.20e-09 M"})
+
+
+def test_drafter_validates_subject_not_just_body():
+    # Regression test: the "never emit a raw placeholder" guarantee must cover
+    # the subject line too, not only the body.
+    fake_response = _FakeParseResponse(EmailDraftSchema(
+        subject="Results: {{not_a_real_fact}}", body="no tokens here"))
+    drafter = EmailDrafter(client=_FakeClient(fake_response))
+    with pytest.raises(UnresolvedPlaceholderError):
+        drafter.draft(_result(), findings=[])
+
+
+def test_drafter_substitutes_placeholder_in_subject_when_valid():
+    fake_response = _FakeParseResponse(EmailDraftSchema(
+        subject="Kd result: {{kd_mean_binder-1}}", body="See details above."))
+    drafter = EmailDrafter(client=_FakeClient(fake_response))
+    out = drafter.draft(_result(), findings=[])
+    assert out.subject == "Kd result: 1.20e-09 M"

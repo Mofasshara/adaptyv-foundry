@@ -100,6 +100,12 @@ class SequenceEntry(_R):
     name: str | None = None
 
 
+class SequenceInput(_R):
+    aa_string: str
+    control: bool | None = None
+    metadata: dict[str, Any] | None = None
+
+
 class TargetReference(_R):
     name: str
     sequence: str | None = None
@@ -261,9 +267,10 @@ class TargetInfo(_R):
 # ---- create / estimate ----
 class ExperimentSpec(_Req):
     experiment_type: ExperimentType
-    sequences: list[SequenceEntry] = Field(default_factory=list)
+    sequences: dict[str, str | SequenceInput] = Field(default_factory=dict)
     target_id: str | None = None
     method: Method | None = None
+    n_replicates: int | None = None
     antigen_concentrations: list[float] | None = None
     parameters: dict[str, Any] | None = None
 

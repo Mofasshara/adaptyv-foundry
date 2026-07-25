@@ -6,7 +6,7 @@ from adaptyv.errors import AnomalyNotAcknowledgedError
 from adaptyv.governance.approval import ApprovalStore
 from adaptyv.governance.models import Actor, AnomalyFinding, DraftStatus
 
-_PLACEHOLDER = re.compile(r"\{\{([\w-]+)\}\}")
+_PLACEHOLDER = re.compile(r"\{\{(.+?)\}\}")
 _SCI_NUMBER = re.compile(r"\d+\.\d+e[+-]\d+")
 
 

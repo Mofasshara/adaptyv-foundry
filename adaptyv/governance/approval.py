@@ -4,6 +4,7 @@ import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from typing import Callable
 
 from adaptyv.errors import (AnomalyNotAcknowledgedError, DraftNotFoundError, InvalidTransitionError, SelfApprovalError)
 from adaptyv.governance.audit import AuditLog
@@ -25,7 +26,8 @@ class ApprovalStore:
         conn.commit()
 
     def create_draft(self, experiment_id: str, body: str, *, result_id: str | None = None,
-                     anomalies: list[AnomalyFinding] | None = None, created_by: Actor) -> Draft:
+                     anomalies: list[AnomalyFinding] | None = None, created_by: Actor,
+                     on_commit: Callable[[str], None] | None = None) -> Draft:
         anomalies = anomalies or []
         draft_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
@@ -39,6 +41,8 @@ class ApprovalStore:
                  json.dumps([a.model_dump(mode="json") for a in anomalies]),
                  json.dumps(created_by.model_dump(mode="json")), created_at),
             )
+            if on_commit is not None:
+                on_commit(draft_id)
             self._audit.record(created_by, "draft.create", "draft", draft_id, "pending_review",
                                {"experiment_id": experiment_id, "result_id": result_id,
                                 "anomaly_count": len(anomalies)})

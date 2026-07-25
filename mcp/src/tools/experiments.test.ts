@@ -74,3 +74,25 @@ test("create_experiment_with_sequences tool forwards name, type, and sequences t
   assert.deepEqual(calls[0].params?.sequences, [{ aa_string: "MKAA", name: "binder-x" }]);
   assert.match(result.content[0].text, /experiment_id/);
 });
+
+test("create_experiment_with_sequences tool forwards method and n_replicates to the bridge", async () => {
+  const calls: { op: string; params?: Record<string, unknown> }[] = [];
+  const bridge = {
+    call: async (op: string, params?: Record<string, unknown>) => {
+      calls.push({ op, params });
+      return { experiment_id: "99999999-9999-9999-9999-999999999999" };
+    },
+  } as any;
+  const tool = createCreateExperimentWithSequencesTool(bridge);
+
+  await tool.handler({
+    name: "My run",
+    experiment_type: "affinity",
+    method: "bli",
+    n_replicates: 3,
+    sequences: [{ aa_string: "MKAA" }],
+  });
+
+  assert.equal(calls[0].params?.method, "bli");
+  assert.equal(calls[0].params?.n_replicates, 3);
+});

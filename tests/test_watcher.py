@@ -1,3 +1,5 @@
+import sqlite3
+
 from adaptyv import AdaptyvClient
 from adaptyv.agents.anomaly import AnomalyDetector
 from adaptyv.agents.email import EmailDraftSchema
@@ -129,3 +131,60 @@ def test_rerun_across_new_connection_to_same_file_does_not_duplicate(tmp_path):
 
     assert second == []
     assert len(store2.list()) == len(first)
+
+
+class _FlakyConn:
+    """Wraps a real sqlite3 connection but forces the watcher_processed INSERT
+    to raise, simulating a genuine race/collision on that statement without
+    needing real concurrency."""
+    def __init__(self, real_conn):
+        self._real = real_conn
+
+    def execute(self, sql, params=()):
+        if sql.strip().startswith("INSERT INTO watcher_processed"):
+            raise sqlite3.IntegrityError("UNIQUE constraint failed: watcher_processed.key")
+        return self._real.execute(sql, params)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_marker_insert_failure_is_isolated_not_batch_fatal():
+    # Regression test for the atomicity fix: if the watcher_processed INSERT
+    # (invoked via create_draft's on_commit hook) raises -- e.g. a genuine
+    # race between two watchers colliding on the same key -- that failure
+    # must be caught by the SAME per-result try/except that isolates a bad
+    # drafter, not escape run() and abort the whole batch.
+    #
+    # Swapping watcher._conn (not store._conn) to a proxy that only fails on
+    # the watcher_processed INSERT means: the draft+audit write (which goes
+    # through store._conn, a separate attribute referencing the same
+    # original connection) still succeeds normally, and only the on_commit
+    # lambda's own self._conn.execute(...) call -- which reads watcher._conn
+    # dynamically at call time -- hits the forced failure.
+    watcher, store = _make_watcher()
+    watcher._conn = _FlakyConn(watcher._conn)
+
+    drafts = watcher.run(experiment_ids=[
+        "11111111-1111-1111-1111-111111111111",
+        "33333333-3333-3333-3333-333333333333",
+    ])
+
+    # Every result's marker-insert failed, so no drafts were produced -- but
+    # run() must still return cleanly (not raise), with both failures
+    # recorded in watcher.errors rather than crashing the batch.
+    assert drafts == []
+    assert len(watcher.errors) == 2
+
+
+def test_draft_and_processed_marker_commit_together():
+    # Regression test for the atomicity bug: after a successful run, every
+    # draft Watcher created has a corresponding watcher_processed row -- they
+    # cannot exist independently of each other.
+    watcher, store = _make_watcher()
+    drafts = watcher.run()
+    assert drafts
+    for draft in drafts:
+        rows = watcher._conn.execute(
+            "SELECT 1 FROM watcher_processed WHERE draft_id=?", (draft.draft_id,)).fetchall()
+        assert len(rows) == 1

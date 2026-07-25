@@ -37,11 +37,13 @@ class Watcher:
                     body = f"Subject: {email.subject}\n\n{email.body}"
                     draft = self._store.create_draft(
                         experiment_id, body, result_id=result.id, anomalies=findings,
-                        created_by=Actor(kind="agent", id="watcher"))
+                        created_by=Actor(kind="agent", id="watcher"),
+                        on_commit=lambda draft_id, key=key: self._conn.execute(
+                            "INSERT INTO watcher_processed (key, draft_id) VALUES (?, ?)",
+                            (key, draft_id)))
                 except Exception as exc:  # noqa: BLE001 - isolate one bad result, keep the batch alive
                     self.errors.append((experiment_id, result.id, exc))
                     continue
-                self._mark_processed(key, draft.draft_id)
                 created.append(draft)
         return created
 
@@ -49,8 +51,3 @@ class Watcher:
         row = self._conn.execute(
             "SELECT 1 FROM watcher_processed WHERE key=?", (key,)).fetchone()
         return row is not None
-
-    def _mark_processed(self, key: str, draft_id: str) -> None:
-        self._conn.execute(
-            "INSERT INTO watcher_processed (key, draft_id) VALUES (?, ?)", (key, draft_id))
-        self._conn.commit()

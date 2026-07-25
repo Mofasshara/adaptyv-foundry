@@ -5,41 +5,15 @@ from adaptyv.governance.approval import ApprovalStore
 from adaptyv.governance.audit import AuditLog
 from adaptyv.governance.db import connect
 from adaptyv.governance.models import Actor, AnomalyFinding
-from evals.guards import (guard_all_numbers_grounded, guard_critical_anomalies_match,
-                          guard_critical_draft_blocks_approval, guard_expected_facts_present,
-                          guard_no_leftover_placeholder_syntax)
+from evals.guards import (guard_critical_anomalies_match, guard_critical_draft_blocks_approval,
+                          guard_expected_facts_present)
 
 HUMAN = Actor(kind="human", id="alice")
 AGENT = Actor(kind="agent", id="watcher")
 
-
-def test_no_leftover_placeholder_passes_on_clean_body():
-    assert guard_no_leftover_placeholder_syntax("All good, no tokens here.") == []
-
-
-def test_no_leftover_placeholder_flags_a_stray_token():
-    violations = guard_no_leftover_placeholder_syntax("Kd was {{kd_mean_x}}.")
-    assert violations and "kd_mean_x" in violations[0]
-
-
-def test_all_numbers_grounded_passes_when_number_traces_to_fact_sheet():
-    fact_sheet = {"kd_mean_binder-1": "1.20e-09 M"}
-    assert guard_all_numbers_grounded("Kd was 1.20e-09 M.", fact_sheet) == []
-
-
-def test_all_numbers_grounded_flags_an_ungrounded_number():
-    violations = guard_all_numbers_grounded("Kd was 9.99e-09 M.", {"kd_mean_binder-1": "1.20e-09 M"})
-    assert violations and "9.99e-09" in violations[0]
-
-
-def test_all_numbers_grounded_rejects_substring_false_negative():
-    # fact_sheet contains an unusual 3-digit-exponent value "1.20e-091" whose text
-    # contains "1.20e-09" as a raw substring. A body citing the shorter, different
-    # number "1.20e-09" must NOT be considered grounded against it: substring
-    # containment is not the same as the number actually appearing in the fact sheet.
-    fact_sheet = {"kd_mean_a": "1.20e-091 M"}
-    violations = guard_all_numbers_grounded("Kd was 1.20e-09 M.", fact_sheet)
-    assert violations and "1.20e-09" in violations[0]
+# No leftover-placeholder / all-numbers-grounded guard tests here: those
+# checks now live solely inside EmailDrafter.draft() (adaptyv/agents/email.py),
+# which is the single enforcement point -- see tests/test_email_drafter.py.
 
 
 def test_critical_anomalies_match_passes_on_exact_match():
@@ -55,9 +29,9 @@ def test_critical_anomalies_match_flags_missing_and_extra():
 
 
 def test_expected_facts_present_passes_and_fails_correctly():
-    assert guard_expected_facts_present({"kd_mean_x": "v"}, frozenset({"kd_mean_x"})) == []
-    violations = guard_expected_facts_present({}, frozenset({"kd_mean_x"}))
-    assert violations and "kd_mean_x" in violations[0]
+    assert guard_expected_facts_present({"kd_1": "v"}, frozenset({"kd_1"})) == []
+    violations = guard_expected_facts_present({}, frozenset({"kd_1"}))
+    assert violations and "kd_1" in violations[0]
 
 
 def _store():
@@ -96,24 +70,3 @@ def test_critical_draft_blocks_approval_is_safe_to_call_twice_on_mismatch():
 
     second = guard_critical_draft_blocks_approval(store, draft.draft_id, HUMAN, is_critical=True)
     assert second == []
-
-
-def test_guard_no_leftover_placeholder_syntax_catches_malformed_construct():
-    from evals.guards import guard_no_leftover_placeholder_syntax
-    violations = guard_no_leftover_placeholder_syntax("Kd was {{bad token}}.")
-    assert violations
-
-
-def test_guard_no_leftover_placeholder_syntax_catches_empty_and_multiline_constructs():
-    # guard_no_leftover_placeholder_syntax is already imported at the top of this file.
-    assert guard_no_leftover_placeholder_syntax("Kd was {{}}.")
-    assert guard_no_leftover_placeholder_syntax("Kd was {{bad\ntoken}}.")
-
-
-def test_all_numbers_grounded_accepts_findings_and_allows_evidence_numbers():
-    # AnomalyFinding is already imported at the top of this file.
-    finding = AnomalyFinding(rule="missing_replicates", severity="warning",
-                             evidence="binder-1 has 0 replicate(s), policy requires 2")
-    violations = guard_all_numbers_grounded(
-        "binder-1 has 0 replicate(s), policy requires 2", {}, [finding])
-    assert violations == []

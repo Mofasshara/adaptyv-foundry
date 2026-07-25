@@ -41,12 +41,25 @@ def test_get_results():
     assert resp["result"][0]["summary"][0]["result_type"] == "affinity"
 
 
+_TARGET_ID = "44444444-0000-0000-0000-000000000001"
+
+
 def test_create_experiment_with_sequences():
     resp = handle_request({"op": "create_experiment_with_sequences", "params": {
-        "name": "MCP test run", "experiment_type": "affinity",
+        "name": "MCP test run", "experiment_type": "affinity", "method": "bli",
+        "target_id": _TARGET_ID,
         "sequences": [{"aa_string": "MKAA", "name": "binder-x"}]}})
     assert resp["ok"] is True
     assert resp["result"]["experiment_id"]
+
+
+def test_create_experiment_with_sequences_missing_required_method_is_rejected():
+    # affinity requires `method` -- this must be rejected, not silently
+    # accepted the way a real live API call would also reject it.
+    resp = handle_request({"op": "create_experiment_with_sequences", "params": {
+        "name": "MCP test run", "experiment_type": "affinity", "target_id": _TARGET_ID,
+        "sequences": [{"aa_string": "MKAA", "name": "binder-x"}]}})
+    assert resp["ok"] is False
 
 
 def test_create_experiment_bridge_op_sends_sequences_as_dict_keyed_by_name():
@@ -57,6 +70,7 @@ def test_create_experiment_bridge_op_sends_sequences_as_dict_keyed_by_name():
             "name": "My run",
             "experiment_type": "affinity",
             "method": "bli",
+            "target_id": _TARGET_ID,
             "sequences": [{"aa_string": "MKAA", "name": "binder-1"},
                          {"aa_string": "MKZZ"}],
         },
@@ -71,9 +85,16 @@ def test_search_targets():
 
 def test_estimate_cost():
     resp = handle_request({"op": "estimate_cost", "params": {
-        "experiment_type": "affinity",
+        "experiment_type": "affinity", "method": "bli", "target_id": _TARGET_ID,
         "sequences": [{"aa_string": "MKAA"}]}})
     assert resp["ok"] is True
+
+
+def test_estimate_cost_missing_required_target_id_is_rejected():
+    resp = handle_request({"op": "estimate_cost", "params": {
+        "experiment_type": "affinity", "method": "bli",
+        "sequences": [{"aa_string": "MKAA"}]}})
+    assert resp["ok"] is False
 
 
 def test_add_sequences():

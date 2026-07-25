@@ -55,9 +55,16 @@ class MockTransport:
             return {"experiment_id": "99999999-9999-9999-9999-999999999999"}
         m = re.fullmatch(r"/api/v1/experiments/([^/]+)/submit", path)
         if method == "POST" and m:
-            return {"experiment_id": m.group(1), "status": "quote_sent"}
+            return {"experiment_id": m.group(1), "previous_status": "draft", "status": "quote_sent",
+                    "confirmed_at": "2026-07-24T00:00:00Z"}
         if method == "POST" and path == "/api/v1/experiments/cost-estimate":
-            return {"breakdown": {"total_usd": 4200}, "warnings": []}
+            return {"breakdown": {
+                "pricing_version": "v1_2026-01-20",
+                "assay": {"experiment_type": "affinity", "sequence_count": 1, "n_replicates": 3,
+                          "unit_price_cents": 15000, "replicate_price_cents": 5000,
+                          "subtotal_cents": 25000},
+                "total_cents": 25000,
+            }, "warnings": []}
         if method == "POST" and path == "/api/v1/sequences":
             body = json or {}
             return {"experiment_id": "11111111-1111-1111-1111-111111111111",

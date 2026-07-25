@@ -20,7 +20,7 @@ GOLDEN_SET: list[GoldenCase] = [
         name="healthy_affinity_panel",
         experiment_id="11111111-1111-1111-1111-111111111111",  # EXP-1001
         expected_critical_rules=frozenset(),
-        expected_fact_keys=frozenset({"kd_mean_binder-1", "kd_mean_pos-control"}),
+        expected_fact_keys=frozenset({"kd_1", "kd_2"}),
     ),
     GoldenCase(
         name="all_sequences_failed",
@@ -32,6 +32,6 @@ GOLDEN_SET: list[GoldenCase] = [
         name="control_out_of_range",
         experiment_id="44444444-4444-4444-4444-444444444444",  # EXP-1004
         expected_critical_rules=frozenset({"control_out_of_policy"}),
-        expected_fact_keys=frozenset({"kd_mean_binder-5", "kd_mean_pos-control"}),
+        expected_fact_keys=frozenset({"kd_1", "kd_2"}),
     ),
 ]

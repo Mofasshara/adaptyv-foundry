@@ -11,9 +11,9 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 28    |
+| ✅ Done       | 32    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 5     |
+| ⏳ Pending    | 1     |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** ≈46h (~5.75d) — of which ≈13h is labeled stretch
@@ -113,18 +113,18 @@
 | 5 | Human-feedback flywheel (promote feedback-store corrections → golden set) | ✅ Done | 1h30m | 2026-07-25 02:07 | 2026-07-25 02:25 | stretch; built |
 | 6 | Autonomous watch loop (interval, idempotent) | ✅ Done | 1h | 2026-07-25 02:27 | 2026-07-25 02:40 | stretch; fix wave: `Watcher.errors` now cleared each cycle so stale errors aren't reprinted forever; final whole-branch review clean, no fixes needed; 144/144 Python tests green, `make eval` 3/3 PASS |
 
-### Phase 6 — Polish & Deliverables  ⏳
+### Phase 6 — Polish & Deliverables  🔄
 
 **Goal:** Reviewer-ready repo: README, architecture diagram, learning guide, packaging, Loom script.
 **Phase estimate:** ~6h (~1h of it stretch)
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | README (value, quickstart, honest scope + limitations) | ⏳ Pending | 1h30m | — | — | core |
-| 2 | Architecture diagram + data-flow doc | ⏳ Pending | 1h | — | — | core |
-| 3 | Finalize LEARNING_GUIDE | ⏳ Pending | 1h | — | — | core |
-| 4 | Loom demo script | ⏳ Pending | 45m | — | — | core; user records |
-| 5 | TestPyPI packaging + install verification | ⏳ Pending | 1h | — | — | **stretch** |
+| 1 | README (value, quickstart, honest scope + limitations) | ✅ Done | 1h30m | 2026-07-26 12:38 | 2026-07-26 13:10 | core; every documented command verified working end-to-end before writing it — caught and fixed a real CLI bug (`review list` truncated draft_id to 8 chars, but `review show`/`approve` need an exact match) in the process |
+| 2 | Architecture diagram + data-flow doc | ✅ Done | 1h | 2026-07-26 13:10 | 2026-07-26 13:25 | core; `docs/ARCHITECTURE.md` — system diagram, 8-tool table, 2 traced end-to-end flows, and a dedicated section on how hallucination-prevention actually works now |
+| 3 | Finalize LEARNING_GUIDE | ✅ Done | 1h | 2026-07-26 13:25 | 2026-07-26 13:45 | core; was stale since pre-implementation (2026-07-24) — removed a fictional LLM-as-judge section that was never built, updated the placeholder-substitution entry to the final deny-by-default design, fixed the TestPyPI section's tense, added 2 new concept entries (deny-by-default vs. detection; idempotency) |
+| 4 | Loom demo script | ✅ Done | 45m | 2026-07-26 13:45 | 2026-07-26 13:55 | core; `docs/LOOM_SCRIPT.md` — every command in it verified to actually run as written; recording itself is the user's step |
+| 5 | TestPyPI packaging + install verification | ⏳ Pending | 1h | — | — | **stretch**; local editable install verified working (used throughout this build); actual publish needs the user's own PyPI account/token — asking before taking any external, visible action |
 
 ---
 

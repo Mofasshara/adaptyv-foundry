@@ -23,6 +23,9 @@ export function createEstimateCostTool(bridge: BridgeClient) {
       description: "Estimate the cost of an experiment configuration before creating it.",
       inputSchema: {
         experiment_type: z.enum(EXPERIMENT_TYPES),
+        method: z.enum(["bli", "spr"]).optional()
+          .describe("Measurement method — required by the API for affinity/screening experiments"),
+        n_replicates: z.number().int().optional().describe("Number of technical replicates"),
         sequences: z.array(z.object({ aa_string: z.string(), name: z.string().optional() })).optional(),
         target_id: z.string().optional(),
       },

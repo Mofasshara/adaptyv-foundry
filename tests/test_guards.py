@@ -102,3 +102,18 @@ def test_guard_no_leftover_placeholder_syntax_catches_malformed_construct():
     from evals.guards import guard_no_leftover_placeholder_syntax
     violations = guard_no_leftover_placeholder_syntax("Kd was {{bad token}}.")
     assert violations
+
+
+def test_guard_no_leftover_placeholder_syntax_catches_empty_and_multiline_constructs():
+    # guard_no_leftover_placeholder_syntax is already imported at the top of this file.
+    assert guard_no_leftover_placeholder_syntax("Kd was {{}}.")
+    assert guard_no_leftover_placeholder_syntax("Kd was {{bad\ntoken}}.")
+
+
+def test_all_numbers_grounded_accepts_findings_and_allows_evidence_numbers():
+    # AnomalyFinding is already imported at the top of this file.
+    finding = AnomalyFinding(rule="missing_replicates", severity="warning",
+                             evidence="binder-1 has 0 replicate(s), policy requires 2")
+    violations = guard_all_numbers_grounded(
+        "binder-1 has 0 replicate(s), policy requires 2", {}, [finding])
+    assert violations == []

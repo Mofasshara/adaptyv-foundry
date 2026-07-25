@@ -38,7 +38,7 @@ def run_case(case: GoldenCase) -> EvalCaseResult:
 
     violations: list[str] = []
     violations += guard_no_leftover_placeholder_syntax(draft_email.body)
-    violations += guard_all_numbers_grounded(draft_email.body, fact_sheet)
+    violations += guard_all_numbers_grounded(draft_email.body, fact_sheet, findings)
     violations += guard_critical_anomalies_match(findings, case.expected_critical_rules)
     violations += guard_expected_facts_present(fact_sheet, case.expected_fact_keys)
 

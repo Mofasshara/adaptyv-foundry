@@ -6,8 +6,7 @@ from adaptyv.errors import AnomalyNotAcknowledgedError
 from adaptyv.governance.approval import ApprovalStore
 from adaptyv.governance.models import Actor, AnomalyFinding, DraftStatus
 
-_PLACEHOLDER = re.compile(r"\{\{(.+?)\}\}")
-_SCI_NUMBER = re.compile(r"\d+\.\d+e[+-]\d+")
+_PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
 
 
 def guard_no_leftover_placeholder_syntax(body: str) -> list[str]:
@@ -15,15 +14,12 @@ def guard_no_leftover_placeholder_syntax(body: str) -> list[str]:
     return [f"leftover unresolved placeholder in body: {{{{{t}}}}}" for t in tokens]
 
 
-def guard_all_numbers_grounded(body: str, fact_sheet: dict[str, str]) -> list[str]:
-    grounded_numbers: set[str] = set()
-    for value in fact_sheet.values():
-        grounded_numbers.update(_SCI_NUMBER.findall(value))
-    violations = []
-    for number in _SCI_NUMBER.findall(body):
-        if number not in grounded_numbers:
-            violations.append(f"number '{number}' in body does not trace to any fact_sheet value")
-    return violations
+def guard_all_numbers_grounded(body: str, fact_sheet: dict[str, str],
+                               findings: list[AnomalyFinding] | None = None) -> list[str]:
+    from adaptyv.agents.email import find_ungrounded_numbers, grounded_numbers
+    grounded = grounded_numbers(fact_sheet, findings or [])
+    ungrounded = find_ungrounded_numbers(body, grounded)
+    return [f"number '{n}' in body does not trace to any fact_sheet value or anomaly evidence" for n in ungrounded]
 
 
 def guard_critical_anomalies_match(findings: list[AnomalyFinding], expected: frozenset[str]) -> list[str]:

@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 from adaptyv import AdaptyvClient
 from adaptyv.agents.anomaly import AnomalyDetector
 from adaptyv.agents.email import EmailDraftSchema
@@ -151,7 +153,7 @@ class _FlakyConn:
 
 def test_marker_insert_failure_is_isolated_not_batch_fatal():
     # Regression test for the atomicity fix: if the watcher_processed INSERT
-    # (invoked via create_draft's on_commit hook) raises -- e.g. a genuine
+    # (invoked via create_draft's before_commit hook) raises -- e.g. a genuine
     # race between two watchers colliding on the same key -- that failure
     # must be caught by the SAME per-result try/except that isolates a bad
     # drafter, not escape run() and abort the whole batch.
@@ -159,7 +161,7 @@ def test_marker_insert_failure_is_isolated_not_batch_fatal():
     # Swapping watcher._conn (not store._conn) to a proxy that only fails on
     # the watcher_processed INSERT means: the draft+audit write (which goes
     # through store._conn, a separate attribute referencing the same
-    # original connection) still succeeds normally, and only the on_commit
+    # original connection) still succeeds normally, and only the before_commit
     # lambda's own self._conn.execute(...) call -- which reads watcher._conn
     # dynamically at call time -- hits the forced failure.
     watcher, store = _make_watcher()
@@ -188,3 +190,12 @@ def test_draft_and_processed_marker_commit_together():
         rows = watcher._conn.execute(
             "SELECT 1 FROM watcher_processed WHERE draft_id=?", (draft.draft_id,)).fetchall()
         assert len(rows) == 1
+
+
+def test_watcher_rejects_a_store_using_a_different_connection():
+    conn = connect()
+    other_conn = connect()
+    store = ApprovalStore(conn, AuditLog(conn))  # store uses `conn`
+    with pytest.raises(ValueError):
+        Watcher(AdaptyvClient(mock=True), AnomalyDetector(DEFAULT_POLICY), _FakeDrafter(),
+               store, other_conn)  # but Watcher is given `other_conn` -- mismatch

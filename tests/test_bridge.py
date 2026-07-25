@@ -2,6 +2,8 @@ import json
 import subprocess
 import sys
 
+import pytest
+
 from adaptyv.bridge import handle_request
 
 
@@ -133,3 +135,29 @@ def test_cli_entrypoint_never_crashes_on_unexpected_exception():
     resp = json.loads(proc.stdout)
     assert resp["ok"] is False
     assert resp["error"]["type"] == "OperationalError"
+
+
+def test_sequences_by_name_rejects_duplicate_explicit_names():
+    from adaptyv.bridge import _sequences_by_name, BridgeError
+    with pytest.raises(BridgeError):
+        _sequences_by_name([{"aa_string": "AAA", "name": "dup"}, {"aa_string": "BBB", "name": "dup"}])
+
+
+def test_sequences_by_name_rejects_unnamed_collision_with_generated_key():
+    # First sequence has no name -> generated key "seq1". Second sequence is
+    # explicitly named "seq1" -> collides with the generated key.
+    from adaptyv.bridge import _sequences_by_name, BridgeError
+    with pytest.raises(BridgeError):
+        _sequences_by_name([{"aa_string": "AAA"}, {"aa_string": "BBB", "name": "seq1"}])
+
+
+def test_create_experiment_bridge_op_rejects_duplicate_sequence_names():
+    response = handle_request({
+        "op": "create_experiment_with_sequences",
+        "params": {
+            "name": "My run", "experiment_type": "affinity", "method": "bli",
+            "sequences": [{"aa_string": "AAA", "name": "dup"}, {"aa_string": "BBB", "name": "dup"}],
+        },
+    })
+    assert response["ok"] is False
+    assert response["error"]["type"] == "BridgeError"

@@ -27,6 +27,8 @@ def _sequences_by_name(raw: list[dict]) -> dict[str, SequenceInput]:
     result: dict[str, SequenceInput] = {}
     for i, s in enumerate(raw):
         key = s.get("name") or f"seq{i + 1}"
+        if key in result:
+            raise BridgeError(f"duplicate sequence name '{key}' -- each sequence must have a unique name")
         result[key] = SequenceInput(aa_string=s["aa_string"], control=s.get("control"))
     return result
 

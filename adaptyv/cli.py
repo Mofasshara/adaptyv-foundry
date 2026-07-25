@@ -109,6 +109,7 @@ def watch_command(
             typer.echo(f"drafted: {d.draft_id} ({d.experiment_id})")
         for experiment_id, result_id, exc in watcher.errors:
             typer.echo(f"error: {experiment_id}/{result_id}: {exc}", err=True)
+        watcher.errors.clear()  # only report NEW failures on the next cycle, not stale ones forever
         if once:
             break
         time.sleep(interval)

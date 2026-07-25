@@ -1,6 +1,11 @@
 from __future__ import annotations
+import time
 import typer
 from adaptyv import AdaptyvClient
+from adaptyv.agents.anomaly import AnomalyDetector
+from adaptyv.agents.policy import DEFAULT_POLICY
+from adaptyv.agents.stub import StubEmailDrafter
+from adaptyv.agents.watcher import Watcher
 from adaptyv.models import AffinityResultSummary
 from adaptyv.errors import GovernanceError
 from adaptyv.governance.approval import ApprovalStore
@@ -85,6 +90,28 @@ def audit_verify(db: str = typer.Option("adaptyv_governance.db")):
     ok = AuditLog(connect(db)).verify()
     typer.echo("OK — chain intact" if ok else "FAILED — chain tampered")
     raise typer.Exit(0 if ok else 1)
+
+@app.command("watch")
+def watch_command(
+    interval: int = typer.Option(60, help="Seconds between polling cycles"),
+    once: bool = typer.Option(False, help="Run a single cycle and exit"),
+    mock: bool = typer.Option(True),
+    db: str = typer.Option("adaptyv_governance.db"),
+):
+    """Poll for newly-completed experiments and draft customer updates."""
+    client = _c(mock)
+    conn = connect(db)
+    store = ApprovalStore(conn, AuditLog(conn))
+    watcher = Watcher(client, AnomalyDetector(DEFAULT_POLICY), StubEmailDrafter(), store, conn)
+    while True:
+        drafts = watcher.run()
+        for d in drafts:
+            typer.echo(f"drafted: {d.draft_id} ({d.experiment_id})")
+        for experiment_id, result_id, exc in watcher.errors:
+            typer.echo(f"error: {experiment_id}/{result_id}: {exc}", err=True)
+        if once:
+            break
+        time.sleep(interval)
 
 def _run(fn):
     try:

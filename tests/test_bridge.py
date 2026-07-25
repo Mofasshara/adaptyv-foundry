@@ -47,6 +47,21 @@ def test_create_experiment_with_sequences():
     assert resp["result"]["experiment_id"]
 
 
+def test_create_experiment_bridge_op_sends_sequences_as_dict_keyed_by_name():
+    from adaptyv.bridge import handle_request
+    response = handle_request({
+        "op": "create_experiment_with_sequences",
+        "params": {
+            "name": "My run",
+            "experiment_type": "affinity",
+            "method": "bli",
+            "sequences": [{"aa_string": "MKAA", "name": "binder-1"},
+                         {"aa_string": "MKZZ"}],
+        },
+    })
+    assert response["ok"] is True
+
+
 def test_search_targets():
     resp = handle_request({"op": "search_targets", "params": {"search": "IL"}})
     assert resp["ok"] is True and resp["result"]

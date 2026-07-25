@@ -12,7 +12,7 @@ from adaptyv.errors import AdaptyvError
 from adaptyv.governance.approval import ApprovalStore
 from adaptyv.governance.audit import AuditLog
 from adaptyv.governance.db import connect
-from adaptyv.models import CostEstimateRequest, CreateExpRequest, ExperimentSpec, SequenceAddRequest, SequenceEntry
+from adaptyv.models import CostEstimateRequest, CreateExpRequest, ExperimentSpec, SequenceAddRequest, SequenceEntry, SequenceInput
 
 
 class BridgeError(AdaptyvError):
@@ -23,8 +23,12 @@ def _client(params: dict) -> AdaptyvClient:
     return AdaptyvClient(mock=params.get("mock", True))
 
 
-def _sequence_entries(raw: list[dict]) -> list[SequenceEntry]:
-    return [SequenceEntry(aa_string=s["aa_string"], name=s.get("name")) for s in raw]
+def _sequences_by_name(raw: list[dict]) -> dict[str, SequenceInput]:
+    result: dict[str, SequenceInput] = {}
+    for i, s in enumerate(raw):
+        key = s.get("name") or f"seq{i + 1}"
+        result[key] = SequenceInput(aa_string=s["aa_string"], control=s.get("control"))
+    return result
 
 
 def _op_list_experiments(params: dict) -> Any:
@@ -44,8 +48,10 @@ def _op_get_experiment_status(params: dict) -> Any:
 def _op_create_experiment_with_sequences(params: dict) -> Any:
     client = _client(params)
     spec = ExperimentSpec(experiment_type=params["experiment_type"],
-                          sequences=_sequence_entries(params.get("sequences", [])),
-                          target_id=params.get("target_id"))
+                          sequences=_sequences_by_name(params.get("sequences", [])),
+                          target_id=params.get("target_id"),
+                          method=params.get("method"),
+                          n_replicates=params.get("n_replicates"))
     request = CreateExpRequest(name=params["name"], experiment_spec=spec,
                                skip_draft=params.get("skip_draft"))
     return client.experiments.create(request).model_dump(mode="json")
@@ -53,8 +59,9 @@ def _op_create_experiment_with_sequences(params: dict) -> Any:
 
 def _op_add_sequences(params: dict) -> Any:
     client = _client(params)
-    request = SequenceAddRequest(experiment_code=params["experiment_code"],
-                                 sequences=_sequence_entries(params.get("sequences", [])))
+    request = SequenceAddRequest(
+        experiment_code=params["experiment_code"],
+        sequences=[SequenceEntry(aa_string=s["aa_string"], name=s.get("name")) for s in params.get("sequences", [])])
     return client.sequences.add(request).model_dump(mode="json")
 
 
@@ -69,8 +76,10 @@ def _op_search_targets(params: dict) -> Any:
 def _op_estimate_cost(params: dict) -> Any:
     client = _client(params)
     spec = ExperimentSpec(experiment_type=params["experiment_type"],
-                          sequences=_sequence_entries(params.get("sequences", [])),
-                          target_id=params.get("target_id"))
+                          sequences=_sequences_by_name(params.get("sequences", [])),
+                          target_id=params.get("target_id"),
+                          method=params.get("method"),
+                          n_replicates=params.get("n_replicates"))
     return client.experiments.cost_estimate(CostEstimateRequest(experiment_spec=spec)).model_dump(mode="json")
 
 

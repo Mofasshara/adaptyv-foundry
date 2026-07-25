@@ -4,8 +4,9 @@ from typing import Any, Callable
 
 from adaptyv import AdaptyvClient
 from adaptyv.agents.anomaly import AnomalyDetector
-from adaptyv.agents.email import EmailDraftSchema, EmailDrafter
+from adaptyv.agents.email import EmailDrafter
 from adaptyv.agents.policy import DEFAULT_POLICY
+from adaptyv.agents.stub import StubEmailDrafter
 from adaptyv.agents.watcher import Watcher
 from adaptyv.errors import AdaptyvError
 from adaptyv.governance.approval import ApprovalStore
@@ -79,25 +80,12 @@ def _op_get_results(params: dict) -> Any:
     return [r.model_dump(mode="json") for r in results]
 
 
-class _StubDrafter:
-    """Zero-credential drafter for the demo/default path: no Claude call."""
-    model = "stub-drafter"
-
-    def draft(self, result, findings) -> EmailDraftSchema:
-        lines = [f"Results are in for {result.title}."]
-        for f in findings:
-            lines.append(f"[{f.severity.value.upper()}] {f.rule}: {f.evidence}")
-        if not findings:
-            lines.append("No anomalies detected.")
-        return EmailDraftSchema(subject=f"Update: {result.title}", body="\n".join(lines))
-
-
 def _op_draft_customer_update(params: dict) -> Any:
     client = _client(params)
     conn = connect(params.get("db", "adaptyv_governance.db"))
     store = ApprovalStore(conn, AuditLog(conn))
     if params.get("mock_llm", True):
-        drafter = _StubDrafter()
+        drafter = StubEmailDrafter()
     else:
         import anthropic
         drafter = EmailDrafter(client=anthropic.Anthropic())

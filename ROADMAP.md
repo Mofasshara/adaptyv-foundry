@@ -11,14 +11,14 @@
 
 | Status       | Count |
 |--------------|-------|
-| ✅ Done       | 23    |
+| ✅ Done       | 28    |
 | 🔄 In Progress | 0   |
-| ⏳ Pending    | 10    |
+| ⏳ Pending    | 5     |
 | 🚫 Blocked    | 0     |
 
 **Total estimated time:** ≈46h (~5.75d) — of which ≈13h is labeled stretch
-**Elapsed time:** ≈2h30m
-**Remaining estimate:** ≈32h15m (~4d)
+**Elapsed time:** ≈15h10m
+**Remaining estimate:** ≈7h15m
 
 ---
 
@@ -99,19 +99,19 @@
 | 3 | ~8 task-shaped tools with Zod descriptions | ✅ Done | 3h | 2026-07-25 00:42 | 2026-07-25 00:50 | core; not 1:1 CRUD |
 | 4 | MCP tool tests against a stubbed bridge + composition root (`index.ts`) wiring all 8 tools into a runnable server | ✅ Done | 1h | 2026-07-25 00:52 | 2026-07-25 00:59 | core; also fixed a real bug: relative `pythonPath` is unsafe when an MCP client spawns the server from an arbitrary cwd — `index.ts` now resolves an absolute path via `import.meta.url`, reproduced and verified fixed with a live cross-cwd bridge call |
 
-### Phase 5 — Evals + Loops  ⏳
+### Phase 5 — Evals + Loops  ✅
 
 **Goal:** Trustworthy output — deterministic guards (core) + LLM-judge and feedback loops (stretch).
 **Phase estimate:** ~8h (~5h of it stretch)
 
 | # | Task | Status | Estimate | Started | Completed | Notes |
 |---|------|--------|----------|---------|-----------|-------|
-| 1 | Golden set (results → expected typed facts) | ⏳ Pending | 1h | — | — | core |
-| 2 | Deterministic guards (exact fact-id substitution, anomalies caught) | ⏳ Pending | 1h30m | — | — | core |
-| 3 | Eval→improve loop (`make eval` report) | ⏳ Pending | 1h | — | — | core |
-| 4 | LLM-judge rubric (accuracy/completeness/tone) — reported as artifact, not CI gate | ⏳ Pending | 2h | — | — | **stretch** |
-| 5 | Human-feedback flywheel (promote feedback-store corrections → golden set) | ⏳ Pending | 1h30m | — | — | **stretch** |
-| 6 | Autonomous watch loop (interval, idempotent) | ⏳ Pending | 1h | — | — | **stretch** |
+| 1 | Golden set (results → expected typed facts) | ✅ Done | 1h | 2026-07-25 01:05 | 2026-07-25 01:20 | core; 3 real-fixture-anchored cases |
+| 2 | Deterministic guards (exact fact-id substitution, anomalies caught) | ✅ Done | 1h30m | 2026-07-25 01:22 | 2026-07-25 01:45 | core; fix wave: approval-guard idempotency + exact-token number grounding |
+| 3 | Eval→improve loop (`make eval` report) | ✅ Done | 1h | 2026-07-25 01:47 | 2026-07-25 02:05 | core; fix wave: added missing FAIL/exit-1 path test coverage |
+| 4 | LLM-judge rubric (accuracy/completeness/tone) — reported as artifact, not CI gate | ⏳ Pending | 2h | — | — | **stretch — explicitly descoped for Phase 5** by user's choice ("Core + flywheel + watch loop"); requires live costed Anthropic API calls |
+| 5 | Human-feedback flywheel (promote feedback-store corrections → golden set) | ✅ Done | 1h30m | 2026-07-25 02:07 | 2026-07-25 02:25 | stretch; built |
+| 6 | Autonomous watch loop (interval, idempotent) | ✅ Done | 1h | 2026-07-25 02:27 | 2026-07-25 02:40 | stretch; fix wave: `Watcher.errors` now cleared each cycle so stale errors aren't reprinted forever; final whole-branch review clean, no fixes needed; 144/144 Python tests green, `make eval` 3/3 PASS |
 
 ### Phase 6 — Polish & Deliverables  ⏳
 
@@ -139,3 +139,4 @@
 | 2026-07-24 15:34 | Re-sequenced to core-first; tagged hash-chain audit, 3 loops, live LLM-judge, TestPyPI as stretch; added SDK write methods to Phase 1 | Codex flagged ~41h scope risked leaving hard requirements shallow, and that Phase 1 lacked the write methods Phase 4's MCP needs | Phase 1 grew (+write tasks); Phases 2/5/6 items tagged core/stretch; total ≈46h with ~13h stretch | All 30 tasks equal priority; Phase 1 read-only |
 | 2026-07-24 13:00 | Phase 2 audit **hash-chain + `verify()` moved from stretch into the core audit task**; only the feedback store stays stretch. Split Phase 2 into 6 finer plan tasks (models, audit, approval, anomaly-gate, CLI, feedback) | The chain is a few lines and an unverifiable chain has no demo/governance value; keeping them together avoids a schema migration | Phase 2 core now delivers a tamper-evident, verifiable log; feedback store remains the only Phase 2 stretch item | Hash-chain + verify were Phase 2 task #4 (stretch) |
 | 2026-07-24 19:36 | Phase 2 final review found and fixed 2 integrity gaps: (1) draft state writes and their audit entry weren't committed atomically — a failed audit write could leave an unaudited state change; (2) `AuditLog.verify()` couldn't detect deletion of the newest entries (tail-truncation) | Whole-branch review reasoned through failure modes the per-task reviews (correctly) didn't check across components; a re-review of the first fix then caught a follow-on gap (no rollback-on-exception, so a failed write could be silently swept into a later commit) | `ApprovalStore` mutations now commit atomically with `AuditLog.record()` and roll back on failure; `AuditLog` gained `head()` + `verify(expected_head=...)` for tail-truncation detection; CLI `list` commands now use the shared error handler; added an honest tamper-evidence-not-tamper-proof docstring | Audit log described only as "hash-chained, append-only" with no atomicity/rollback or truncation-detection contract specified |
+| 2026-07-25 02:41 | Phase 5 built as "Core + flywheel + watch loop"; the LLM-judge rubric task (Phase 5 #4) explicitly descoped for this phase | User's explicit scope choice — the LLM-judge requires live, costed Anthropic API calls, which is a call only the user should make, not something to default into during a take-home build | Phase 5 delivers golden set + deterministic guards + eval→improve loop + human-feedback flywheel + autonomous watch loop as the CI-gating eval suite; LLM-judge remains Pending, not blocking Phase 5's ✅ badge | All 6 Phase 5 tasks, including the LLM-judge, were originally equal-priority stretch/core items with no task explicitly deferred |

@@ -1,3 +1,5 @@
+import sqlite3
+
 from adaptyv import AdaptyvClient
 from adaptyv.agents.anomaly import AnomalyDetector
 from adaptyv.agents.email import EmailDraftSchema
@@ -131,33 +133,48 @@ def test_rerun_across_new_connection_to_same_file_does_not_duplicate(tmp_path):
     assert len(store2.list()) == len(first)
 
 
-def test_mark_processed_failure_is_isolated_not_batch_fatal():
-    # Regression test: if writing the watcher_processed marker fails (e.g. a
-    # genuine race between two watchers on the same key), that failure must
-    # be caught by the SAME per-result try/except that isolates a bad
-    # drafter -- not escape run() and abort the whole batch.
-    watcher, store = _make_watcher()
+class _FlakyConn:
+    """Wraps a real sqlite3 connection but forces the watcher_processed INSERT
+    to raise, simulating a genuine race/collision on that statement without
+    needing real concurrency."""
+    def __init__(self, real_conn):
+        self._real = real_conn
 
-    # Pre-insert a colliding marker row so the real INSERT inside on_commit
-    # collides with a UNIQUE/PRIMARY KEY violation for the first result Watcher
-    # will process.
-    first_result = watcher._client.experiments.results("11111111-1111-1111-1111-111111111111")[0]
-    key = f"11111111-1111-1111-1111-111111111111:{first_result.id}:{watcher._drafter.model}"
-    watcher._conn.execute(
-        "INSERT INTO watcher_processed (key, draft_id) VALUES (?, ?)", (key, "some-other-draft-id"))
-    watcher._conn.commit()
+    def execute(self, sql, params=()):
+        if sql.strip().startswith("INSERT INTO watcher_processed"):
+            raise sqlite3.IntegrityError("UNIQUE constraint failed: watcher_processed.key")
+        return self._real.execute(sql, params)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_marker_insert_failure_is_isolated_not_batch_fatal():
+    # Regression test for the atomicity fix: if the watcher_processed INSERT
+    # (invoked via create_draft's on_commit hook) raises -- e.g. a genuine
+    # race between two watchers colliding on the same key -- that failure
+    # must be caught by the SAME per-result try/except that isolates a bad
+    # drafter, not escape run() and abort the whole batch.
+    #
+    # Swapping watcher._conn (not store._conn) to a proxy that only fails on
+    # the watcher_processed INSERT means: the draft+audit write (which goes
+    # through store._conn, a separate attribute referencing the same
+    # original connection) still succeeds normally, and only the on_commit
+    # lambda's own self._conn.execute(...) call -- which reads watcher._conn
+    # dynamically at call time -- hits the forced failure.
+    watcher, store = _make_watcher()
+    watcher._conn = _FlakyConn(watcher._conn)
 
     drafts = watcher.run(experiment_ids=[
         "11111111-1111-1111-1111-111111111111",
         "33333333-3333-3333-3333-333333333333",
     ])
 
-    # The colliding experiment's result is skipped as already-processed (the
-    # pre-inserted row makes _already_processed() return True for it) --
-    # this test is really about proving run() doesn't crash and the SECOND
-    # experiment still produces a draft.
-    assert len(drafts) == 1
-    assert drafts[0].experiment_id == "33333333-3333-3333-3333-333333333333"
+    # Every result's marker-insert failed, so no drafts were produced -- but
+    # run() must still return cleanly (not raise), with both failures
+    # recorded in watcher.errors rather than crashing the batch.
+    assert drafts == []
+    assert len(watcher.errors) == 2
 
 
 def test_draft_and_processed_marker_commit_together():

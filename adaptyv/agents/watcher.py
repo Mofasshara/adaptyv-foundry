@@ -11,6 +11,10 @@ from adaptyv.governance.models import Actor, Draft
 class Watcher:
     def __init__(self, client, detector: AnomalyDetector, drafter: EmailDrafter,
                 approval_store: ApprovalStore, conn: sqlite3.Connection) -> None:
+        if not approval_store.shares_connection_with(conn):
+            raise ValueError(
+                "Watcher's conn must be the exact same connection object as approval_store's "
+                "-- the atomic before_commit hook can only be atomic if both write through one connection")
         self._client = client
         self._detector = detector
         self._drafter = drafter
@@ -38,7 +42,7 @@ class Watcher:
                     draft = self._store.create_draft(
                         experiment_id, body, result_id=result.id, anomalies=findings,
                         created_by=Actor(kind="agent", id="watcher"),
-                        on_commit=lambda draft_id, key=key: self._conn.execute(
+                        before_commit=lambda draft_id, key=key: self._conn.execute(
                             "INSERT INTO watcher_processed (key, draft_id) VALUES (?, ?)",
                             (key, draft_id)))
                 except Exception as exc:  # noqa: BLE001 - isolate one bad result, keep the batch alive

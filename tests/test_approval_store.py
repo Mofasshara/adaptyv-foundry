@@ -68,19 +68,19 @@ def test_get_unknown_raises():
         s.get("nope")
 
 
-def test_create_draft_on_commit_hook_runs_in_the_same_transaction():
+def test_create_draft_before_commit_hook_runs_in_the_same_transaction():
     conn = connect()
     store = ApprovalStore(conn, AuditLog(conn))
     calls = []
 
     draft = store.create_draft(
         "exp-1", "body text", created_by=Actor(kind="agent", id="watcher"),
-        on_commit=lambda draft_id: calls.append(draft_id))
+        before_commit=lambda draft_id: calls.append(draft_id))
 
     assert calls == [draft.draft_id]
 
 
-def test_create_draft_on_commit_failure_rolls_back_the_draft_too():
+def test_create_draft_before_commit_failure_rolls_back_the_draft_too():
     conn = connect()
     store = ApprovalStore(conn, AuditLog(conn))
 
@@ -89,8 +89,16 @@ def test_create_draft_on_commit_failure_rolls_back_the_draft_too():
 
     with pytest.raises(RuntimeError):
         store.create_draft("exp-1", "body text",
-                           created_by=Actor(kind="agent", id="watcher"), on_commit=_boom)
+                           created_by=Actor(kind="agent", id="watcher"), before_commit=_boom)
 
-    # The draft must NOT exist -- on_commit failing must roll back the whole
+    # The draft must NOT exist -- before_commit failing must roll back the whole
     # transaction, not leave an orphaned draft with no marker.
     assert store.list() == []
+
+
+def test_shares_connection_with_identifies_the_same_connection_object():
+    conn = connect()
+    other_conn = connect()
+    store = ApprovalStore(conn, AuditLog(conn))
+    assert store.shares_connection_with(conn) is True
+    assert store.shares_connection_with(other_conn) is False

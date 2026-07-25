@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 from adaptyv import AdaptyvClient
 from adaptyv.agents.anomaly import AnomalyDetector
 from adaptyv.agents.email import EmailDraftSchema
@@ -188,3 +190,12 @@ def test_draft_and_processed_marker_commit_together():
         rows = watcher._conn.execute(
             "SELECT 1 FROM watcher_processed WHERE draft_id=?", (draft.draft_id,)).fetchall()
         assert len(rows) == 1
+
+
+def test_watcher_rejects_a_store_using_a_different_connection():
+    conn = connect()
+    other_conn = connect()
+    store = ApprovalStore(conn, AuditLog(conn))  # store uses `conn`
+    with pytest.raises(ValueError):
+        Watcher(AdaptyvClient(mock=True), AnomalyDetector(DEFAULT_POLICY), _FakeDrafter(),
+               store, other_conn)  # but Watcher is given `other_conn` -- mismatch

@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, Generic, Literal, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 T = TypeVar("T")
 
@@ -265,6 +265,14 @@ class TargetInfo(_R):
 
 
 # ---- create / estimate ----
+# Real Foundry API assay matrix (OpenAPI ExperimentSpec description): required
+# fields differ by experiment type, and violating them is a 400 listing every
+# problem. Enforcing this here means mock mode rejects exactly what live mode
+# would reject, instead of silently accepting an invalid spec.
+_BINDING_TYPES = frozenset({ExperimentType.AFFINITY, ExperimentType.SCREENING})
+_TARGET_REQUIRED = _BINDING_TYPES | {ExperimentType.EPITOPE_BINNING}
+
+
 class ExperimentSpec(_Req):
     experiment_type: ExperimentType
     sequences: dict[str, str | SequenceInput] = Field(default_factory=dict)
@@ -273,6 +281,30 @@ class ExperimentSpec(_Req):
     n_replicates: int | None = None
     antigen_concentrations: list[float] | None = None
     parameters: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _check_assay_matrix(self) -> "ExperimentSpec":
+        et = self.experiment_type
+        problems: list[str] = []
+        if et in _BINDING_TYPES and self.method is None:
+            problems.append(f"method is required for {et.value}")
+        if et not in _BINDING_TYPES and self.method is not None:
+            problems.append(f"method must not be set for {et.value}")
+        if et in _TARGET_REQUIRED and self.target_id is None:
+            problems.append(f"target_id is required for {et.value}")
+        if et not in _TARGET_REQUIRED and self.target_id is not None:
+            problems.append(f"target_id must not be set for {et.value}")
+        if not self.sequences:
+            problems.append("at least one sequence is required")
+        if et is ExperimentType.EPITOPE_BINNING:
+            n = len(self.sequences)
+            if n % 4 != 0 or not (4 <= n <= 28):
+                problems.append("epitope_binning requires a multiple of 4 sequences, between 4 and 28")
+            if self.n_replicates is not None:
+                problems.append("n_replicates must not be set for epitope_binning")
+        if problems:
+            raise ValueError("; ".join(problems))
+        return self
 
 
 class CreateExpRequest(_Req):
@@ -294,10 +326,34 @@ class CostEstimateRequest(_Req):
     experiment_spec: ExperimentSpec
 
 
+class AssayCost(_R):
+    experiment_type: str
+    sequence_count: int
+    n_replicates: int
+    unit_price_cents: int
+    replicate_price_cents: int
+    subtotal_cents: int
+
+
+class CostBreakdown(_R):
+    pricing_version: str
+    assay: AssayCost
+    total_cents: int
+    materials: Any | None = None
+
+
 class CostEstimateResponse(_R):
-    breakdown: Any | None = None
+    breakdown: CostBreakdown | None = None
     incomplete: Any | None = None
     warnings: list[str] | None = None
+
+
+class ExperimentConfirmationResponse(_R):
+    experiment_id: str
+    previous_status: ExperimentStatus
+    status: ExperimentStatus
+    confirmed_at: str
+    stripe_invoice_url: str | None = None
 
 
 class ErrorResponse(_R):

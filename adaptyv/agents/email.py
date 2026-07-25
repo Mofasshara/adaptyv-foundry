@@ -4,29 +4,18 @@ import re
 
 from pydantic import BaseModel
 
-from adaptyv.errors import UngroundedNumberError, UnresolvedPlaceholderError
+from adaptyv.errors import UnresolvedPlaceholderError
 from adaptyv.governance.models import AnomalyFinding
 from adaptyv.models import AffinityResultSummary, ResultInfo
 
 EMAIL_DRAFT_MODEL = "claude-opus-4-8"
 
-# Fact-sheet keys are derived from sequence names (build_fact_sheet), which routinely
-# contain hyphens (e.g. "binder-1") -- \w alone would silently fail to match those
-# tokens, letting an un-substituted {{...}} slip through unresolved-placeholder
-# detection entirely. Include '-' explicitly so every emitted token is checked.
-_PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
-_VALID_FACT_ID = re.compile(r"^[\w-]+$")
-_NUMBER = re.compile(r"(?<![\w-])-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?%?")
-# The `(?<![\w-])` negative lookbehind is required, not decorative: without
-# it, `-?` greedily treats the hyphen in a hyphenated label like "binder-1"
-# as a negative sign, extracting the spurious "number" -1 -- which is never
-# grounded (no fact or evidence ever produces "-1"), so a naive regex here
-# would raise UngroundedNumberError on the completely benign, real sentence
-# "Binder-1 showed strong binding...". The lookbehind requires the
+_PLACEHOLDER = re.compile(r"\{\{([\w-]+)\}\}")
+# Matches a standalone number, but not a digit glued onto an identifier
+# (e.g. the "1" in "binder-1" or "seq1") -- the lookbehind requires the
 # character immediately before a candidate match to be neither a word
-# character nor a hyphen, so "binder-1" and "seq1" are correctly seen as
-# identifiers, not numbers -- verified empirically before this plan was
-# written; see test_drafter_does_not_misread_a_hyphenated_label_as_a_negative_number.
+# character nor a hyphen.
+_NUMBER = re.compile(r"(?<![\w-])-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?%?")
 
 
 class EmailDraftSchema(BaseModel):
@@ -34,59 +23,68 @@ class EmailDraftSchema(BaseModel):
     body: str
 
 
-def _slug(name: str) -> str:
-    return name.strip()
-
-
 def build_fact_sheet(result: ResultInfo) -> dict[str, str]:
-    """Pure. One entry per non-null kd_mean — the only numbers the drafter may cite.
-
-    Labels are derived from sequence name (or an aa_string prefix), which can
-    collide across summary entries. On collision the first occurrence keeps
-    the bare key; subsequent collisions are disambiguated with a numeric
-    suffix (_2, _3, ...) so every measured kd_mean still gets a unique,
-    correctly-attributed fact_id instead of silently overwriting an earlier one.
-    """
+    """Pure. One opaque-ID entry per non-null kd_mean -- the only per-sequence
+    measurements the drafter may cite. IDs are a plain counter (kd_1, kd_2,
+    ...), not derived from sequence names: names can contain arbitrary
+    characters or collide, and a placeholder token must always be a single,
+    unambiguous, unique, substitution-safe identifier."""
     facts: dict[str, str] = {}
+    i = 0
     for s in result.summary:
         if isinstance(s, AffinityResultSummary) and s.kd_mean is not None:
-            label = _slug(s.sequence.name or s.sequence.aa_string[:8])
-            key = f"kd_mean_{label}"
-            if key in facts:
-                suffix = 2
-                while f"{key}_{suffix}" in facts:
-                    suffix += 1
-                key = f"{key}_{suffix}"
-            facts[key] = f"{s.kd_mean:.2e} {s.kd_units}"
+            i += 1
+            facts[f"kd_{i}"] = f"{s.kd_mean:.2e} {s.kd_units}"
     return facts
 
 
+def _templated_evidence(findings: list[AnomalyFinding], fact_sheet: dict[str, str]) -> list[str]:
+    """Render each finding's evidence line with its own embedded numbers
+    replaced by fresh opaque placeholders (added to fact_sheet as a side
+    effect), so the drafter can copy anomaly evidence verbatim -- as
+    instructed -- while every number it echoes still resolves through the
+    exact same placeholder mechanism as a real Kd value. No numeric literal
+    from evidence text ever reaches the model as a bare digit."""
+    lines: list[str] = []
+    for idx, f in enumerate(findings, start=1):
+        counter = {"n": 0}
+
+        def _replace(m: re.Match) -> str:
+            counter["n"] += 1
+            fact_id = f"ev_{idx}_{counter['n']}"
+            fact_sheet[fact_id] = m.group(0)
+            return f"{{{{{fact_id}}}}}"
+
+        templated = _NUMBER.sub(_replace, f.evidence)
+        lines.append(f"- [{f.severity.value}] {f.rule}: {templated}")
+    return lines
+
+
 def substitute_facts(body: str, fact_sheet: dict[str, str]) -> str:
+    """Deny-by-default: a number may reach the output ONLY via a placeholder
+    that resolves to a real fact. Any digit typed directly by the drafter
+    (never wrapped in {{...}}) is rejected outright, and any leftover brace
+    character after substitution (malformed, unclosed, or empty placeholder
+    syntax) is rejected too -- there is no code path by which a raw or
+    unverified number can survive into a persisted draft.
+    """
+    without_placeholders = _PLACEHOLDER.sub("", body)
+    if _NUMBER.search(without_placeholders):
+        raise UnresolvedPlaceholderError(
+            f"drafter emitted a raw number outside any placeholder in: {body!r}")
+
     def _replace(m: re.Match) -> str:
         fact_id = m.group(1)
-        if not _VALID_FACT_ID.match(fact_id) or fact_id not in fact_sheet:
+        if fact_id not in fact_sheet:
             raise UnresolvedPlaceholderError(
                 f"drafter emitted unknown placeholder '{{{{{fact_id}}}}}' — not in the fact sheet")
         return fact_sheet[fact_id]
-    return _PLACEHOLDER.sub(_replace, body)
 
-
-def grounded_numbers(fact_sheet: dict[str, str], findings: list[AnomalyFinding]) -> set[str]:
-    """Every number a drafted email is allowed to contain: fact-sheet values
-    (the only measurements the model may cite) and numbers appearing
-    verbatim in anomaly evidence (the only other grounded-truth text passed
-    into the prompt, which the drafter is instructed to echo directly).
-    Anything else is fabrication."""
-    grounded: set[str] = set()
-    for value in fact_sheet.values():
-        grounded.update(_NUMBER.findall(value))
-    for f in findings:
-        grounded.update(_NUMBER.findall(f.evidence))
-    return grounded
-
-
-def find_ungrounded_numbers(text: str, grounded: set[str]) -> list[str]:
-    return [n for n in _NUMBER.findall(text) if n not in grounded]
+    resolved = _PLACEHOLDER.sub(_replace, body)
+    if "{" in resolved or "}" in resolved:
+        raise UnresolvedPlaceholderError(
+            f"drafter emitted malformed or unbalanced placeholder syntax in: {body!r}")
+    return resolved
 
 
 class EmailDrafter:
@@ -96,19 +94,23 @@ class EmailDrafter:
 
     def draft(self, result: ResultInfo, findings: list[AnomalyFinding]) -> EmailDraftSchema:
         fact_sheet = build_fact_sheet(result)
+        finding_lines = _templated_evidence(findings, fact_sheet)  # mutates fact_sheet
         system = (
             "You draft professional, plain-English customer update emails for a protein "
             "validation lab. You may reference numeric results ONLY via the exact "
-            "placeholder tokens listed below, written literally as {{token}} in your body "
-            "text — never write a number yourself. Use the qualitative details (binding "
-            "strength, performance, anomaly notes) directly as given."
+            "placeholder tokens written literally as {{token}} — including every number "
+            "inside the anomaly findings below, which are already given to you as "
+            "placeholder tokens; copy them exactly. Never write a number yourself. Use "
+            "the qualitative details (binding strength, performance, anomaly notes) "
+            "directly as given."
         )
-        fact_lines = "\n".join(f"- {{{{{fid}}}}}: a binding-affinity (Kd) value" for fid in fact_sheet)
-        finding_lines = "\n".join(f"- [{f.severity.value}] {f.rule}: {f.evidence}" for f in findings)
+        fact_lines = "\n".join(f"- {{{{{fid}}}}}: a binding-affinity (Kd) value" for fid in fact_sheet
+                               if fid.startswith("kd_"))
+        finding_block = "\n".join(finding_lines)
         user = (
             f"Result title: {result.title}\n\n"
             f"Available numeric placeholders:\n{fact_lines or '(none)'}\n\n"
-            f"Anomaly findings:\n{finding_lines or '(none)'}\n\n"
+            f"Anomaly findings:\n{finding_block or '(none)'}\n\n"
             "Write a short customer update email (subject + body) summarizing these results."
         )
         response = self._client.messages.parse(
@@ -121,10 +123,4 @@ class EmailDrafter:
         draft = response.parsed_output
         resolved_subject = substitute_facts(draft.subject, fact_sheet)
         resolved_body = substitute_facts(draft.body, fact_sheet)
-        grounded = grounded_numbers(fact_sheet, findings)
-        for text in (resolved_subject, resolved_body):
-            ungrounded = find_ungrounded_numbers(text, grounded)
-            if ungrounded:
-                raise UngroundedNumberError(
-                    f"drafter emitted ungrounded number(s) {ungrounded} not traceable to any fact or anomaly evidence")
         return EmailDraftSchema(subject=resolved_subject, body=resolved_body)

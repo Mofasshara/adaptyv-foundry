@@ -28,8 +28,10 @@ class ExperimentsResource:
                                  json=request.model_dump(exclude_none=True))
         return CreateExpResponse.model_validate(data)
 
-    def submit(self, experiment_id: str) -> dict:
-        return self._c._request("POST", f"/api/v1/experiments/{experiment_id}/submit")
+    def submit(self, experiment_id: str):
+        from adaptyv.models import ExperimentConfirmationResponse
+        data = self._c._request("POST", f"/api/v1/experiments/{experiment_id}/submit")
+        return ExperimentConfirmationResponse.model_validate(data)
 
     def cost_estimate(self, request):
         from adaptyv.models import CostEstimateResponse

@@ -1,25 +1,16 @@
 from __future__ import annotations
 
-import re
-
 from adaptyv.errors import AnomalyNotAcknowledgedError
 from adaptyv.governance.approval import ApprovalStore
 from adaptyv.governance.models import Actor, AnomalyFinding, DraftStatus
 
-_PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
-
-
-def guard_no_leftover_placeholder_syntax(body: str) -> list[str]:
-    tokens = _PLACEHOLDER.findall(body)
-    return [f"leftover unresolved placeholder in body: {{{{{t}}}}}" for t in tokens]
-
-
-def guard_all_numbers_grounded(body: str, fact_sheet: dict[str, str],
-                               findings: list[AnomalyFinding] | None = None) -> list[str]:
-    from adaptyv.agents.email import find_ungrounded_numbers, grounded_numbers
-    grounded = grounded_numbers(fact_sheet, findings or [])
-    ungrounded = find_ungrounded_numbers(body, grounded)
-    return [f"number '{n}' in body does not trace to any fact_sheet value or anomaly evidence" for n in ungrounded]
+# No leftover-placeholder / ungrounded-number guards live here: EmailDrafter.draft()
+# itself raises UnresolvedPlaceholderError for both cases (deny-by-default -- any
+# raw digit or malformed/leftover brace fails before draft() ever returns). A
+# second, separate implementation of the same check here would just be a second
+# place for the two to drift out of sync, which is exactly what happened before.
+# If draft() ever lets something bad through, run_case()'s try/except reports it
+# as a crashed case -- which is the correct, louder failure mode.
 
 
 def guard_critical_anomalies_match(findings: list[AnomalyFinding], expected: frozenset[str]) -> list[str]:

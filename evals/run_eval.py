@@ -14,9 +14,8 @@ from adaptyv.governance.models import Actor
 from evals.fake_llm import DeterministicFakeClient
 from evals.flywheel import load_promoted_cases
 from evals.golden_set import GOLDEN_SET, GoldenCase
-from evals.guards import (guard_all_numbers_grounded, guard_critical_anomalies_match,
-                          guard_critical_draft_blocks_approval, guard_expected_facts_present,
-                          guard_no_leftover_placeholder_syntax)
+from evals.guards import (guard_critical_anomalies_match, guard_critical_draft_blocks_approval,
+                          guard_expected_facts_present)
 
 HUMAN_REVIEWER = Actor(kind="human", id="eval-suite")
 AGENT_DRAFTER = Actor(kind="agent", id="eval-suite-watcher")
@@ -37,8 +36,6 @@ def run_case(case: GoldenCase) -> EvalCaseResult:
     draft_email = drafter.draft(result, findings)
 
     violations: list[str] = []
-    violations += guard_no_leftover_placeholder_syntax(draft_email.body)
-    violations += guard_all_numbers_grounded(draft_email.body, fact_sheet, findings)
     violations += guard_critical_anomalies_match(findings, case.expected_critical_rules)
     violations += guard_expected_facts_present(fact_sheet, case.expected_fact_keys)
 

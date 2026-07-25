@@ -66,3 +66,31 @@ def test_get_unknown_raises():
     s = _store()
     with pytest.raises(DraftNotFoundError):
         s.get("nope")
+
+
+def test_create_draft_on_commit_hook_runs_in_the_same_transaction():
+    conn = connect()
+    store = ApprovalStore(conn, AuditLog(conn))
+    calls = []
+
+    draft = store.create_draft(
+        "exp-1", "body text", created_by=Actor(kind="agent", id="watcher"),
+        on_commit=lambda draft_id: calls.append(draft_id))
+
+    assert calls == [draft.draft_id]
+
+
+def test_create_draft_on_commit_failure_rolls_back_the_draft_too():
+    conn = connect()
+    store = ApprovalStore(conn, AuditLog(conn))
+
+    def _boom(draft_id):
+        raise RuntimeError("marker write failed")
+
+    with pytest.raises(RuntimeError):
+        store.create_draft("exp-1", "body text",
+                           created_by=Actor(kind="agent", id="watcher"), on_commit=_boom)
+
+    # The draft must NOT exist -- on_commit failing must roll back the whole
+    # transaction, not leave an orphaned draft with no marker.
+    assert store.list() == []

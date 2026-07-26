@@ -53,7 +53,7 @@ adaptyv review list
 adaptyv review show <draft_id>
 
 # A human approves (or rejects) — the agent can never do this itself
-adaptyv review approve <draft_id> --by "alice@adaptyvbio.com"
+adaptyv review approve <draft_id> --by alice@adaptyvbio.com
 
 # Verify the audit trail hasn't been tampered with
 adaptyv audit verify

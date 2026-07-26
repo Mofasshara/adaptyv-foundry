@@ -52,18 +52,22 @@ Point out the `⚠CRITICAL` flag on one of them.
 adaptyv review show <draft_id>
 ```
 
+(Replace `<draft_id>` with one of the actual UUIDs printed by `review list` above — pick one of the `⚠CRITICAL` ones.)
+
 **Say:** "This one has a critical anomaly — a positive control outside its expected range. Watch what happens if I try to approve it anyway."
 
 ```bash
-adaptyv review approve <draft_id> --by "you@adaptyvbio.com"
+adaptyv review approve <draft_id> --by you@adaptyvbio.com
 ```
 
 **Say:** "Hard-blocked. The agent cannot approve its own work, and a critical anomaly cannot be waved through — a human has to explicitly acknowledge it first."
 
 ```bash
-adaptyv review ack <draft_id> --by "you@adaptyvbio.com"
-adaptyv review approve <draft_id> --by "you@adaptyvbio.com"
+adaptyv review ack <draft_id> --by you@adaptyvbio.com
+adaptyv review approve <draft_id> --by you@adaptyvbio.com
 ```
+
+No quotes around the email — Typer only needs quotes around a value if it contains a space, and an email address doesn't, so leaving them off avoids any copy-paste/smart-quote trouble live.
 
 ## Beat 4 — Trust: the audit trail and eval suite (1:30–1:50)
 

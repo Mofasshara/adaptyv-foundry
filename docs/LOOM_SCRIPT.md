@@ -46,15 +46,19 @@ adaptyv watch --once
 adaptyv review list
 ```
 
-Point out the `⚠CRITICAL` flag on one of them.
+You'll see 3 drafts. The draft IDs (the long UUID at the start of each line) are randomly generated fresh every run — they will be different every time you do this, including on your actual recording take. **Do not hardcode or memorize a specific ID** — always read it live from your own terminal output.
+
+Two of the three will show `⚠CRITICAL`. Pick **either one** and copy its draft ID for the next few commands — but note which underlying anomaly it is, since that changes what you say next:
+- If the row's experiment is `33333333-3333-3333-3333-333333333333` → the anomaly is **all sequences failed** (no measurable binding at all).
+- If the row's experiment is `44444444-4444-4444-4444-444444444444` → the anomaly is **positive control out of range**.
 
 ```bash
 adaptyv review show <draft_id>
 ```
 
-(Replace `<draft_id>` with one of the actual UUIDs printed by `review list` above — pick one of the `⚠CRITICAL` ones.)
+(Replace `<draft_id>` with the UUID you just copied.)
 
-**Say:** "This one has a critical anomaly — a positive control outside its expected range. Watch what happens if I try to approve it anyway."
+**Say (generic, works for either):** "This one has a critical anomaly flagged automatically — [say either "no measurable binding on any sequence" or "the positive control came back outside its expected range," matching whichever one is actually on your screen]. Watch what happens if I try to approve it anyway."
 
 ```bash
 adaptyv review approve <draft_id> --by you@adaptyvbio.com
